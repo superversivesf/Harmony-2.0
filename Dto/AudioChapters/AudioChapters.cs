@@ -30,7 +30,7 @@ public class Chapter
 public class AudioChapters
 {
     [JsonPropertyName("chapters")]
-    public List<Chapter> chapters { get; } = new List<Chapter>();
+    public List<Chapter> chapters { get; set; }
 }
 
 public class Tags
