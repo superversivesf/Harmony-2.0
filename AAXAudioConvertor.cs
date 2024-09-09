@@ -1,11 +1,9 @@
 ﻿using System.Text.Json;
 using Harmony.Dto;
-using Harmony.Dto.AudioChapters;
-using Harmony.Dto.AudioFormat;
-using Harmony.Dto.AudioStream;
 using TagLib;
+using TagLib.Id3v2;
 using Xabe.FFmpeg;
-using AudioStream = Harmony.Dto.AudioStream.AudioStream;
+using AudioStream = Harmony.Dto.AudioStreamDto;
 using File = System.IO.File;
 
 namespace Harmony;
@@ -19,9 +17,11 @@ internal class AaxAudioConvertor
     private readonly bool _quietMode;
     private readonly string _storageFolder;
     private readonly string _workingFolder;
+    private readonly string _outputFormat;
+    private readonly bool _keepMp3;
 
     public AaxAudioConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-        string outputFolder, string storageFolder, string workingFolder)
+        string outputFolder, string storageFolder, string workingFolder, string outputFormat, bool keepMp3)
     {
         _activationBytes = activationBytes;
         _bitrate = bitrate;
@@ -30,6 +30,8 @@ internal class AaxAudioConvertor
         _outputFolder = outputFolder;
         _storageFolder = storageFolder;
         _workingFolder = workingFolder;
+        _outputFormat = outputFormat;
+        _keepMp3 = keepMp3;
     }
 
     internal void Execute()
@@ -58,21 +60,37 @@ internal class AaxAudioConvertor
         var aaxInfo = GetAaxInfo(f);
 
         // Write out relevant stats
-        logger.WriteLine($"Title: {CleanTitle(aaxInfo.format.format?.tags?.title)}");
-        logger.WriteLine($"Author(s): {aaxInfo.format.format?.tags?.artist}");
+        logger.WriteLine($"Title: {CleanTitle(aaxInfo.Format.format?.tags?.title)}");
+        logger.WriteLine($"Author(s): {aaxInfo.Format.format?.tags?.artist}");
 
-        var duration = double.Parse(aaxInfo.format.format?.duration!);
-        var h = (int)duration / 3600;
-        var m = ((int)duration - h * 3600) / 60;
-        var s = (int)duration - h * 3600 - m * 60;
+        if (aaxInfo.Format.format?.duration != null)
+        {
+            var duration = double.Parse(aaxInfo.Format.format.duration);
+            var h = (int)duration / 3600;
+            var m = ((int)duration - h * 3600) / 60;
+            var s = (int)duration - h * 3600 - m * 60;
 
-        logger.WriteLine($"Length: {h:D2}:{m:D2}:{s:D2}");
-        logger.WriteLine($"Chapters: {aaxInfo.chapters.chapters.Count}");
+            logger.WriteLine($"Length: {h:D2}:{m:D2}:{s:D2}");
+        }
+        else
+        {
+            logger.WriteLine($"Length: 0! Something is wrong");
+        }
+
+        logger.WriteLine($"Chapters: {aaxInfo.Chapters.chapters?.Count}");
 
         var intermediateFile = ProcessToMp3(f);
         var coverFile = GenerateCover(f);
         var outputDirectory = ProcessChapters(intermediateFile, aaxInfo, coverFile);
 
+        if (_outputFormat == "m4b")
+        {
+            CreateM4bFile(outputDirectory, aaxInfo, coverFile);
+            if (!_keepMp3)
+            {
+                DeleteMp3Files(outputDirectory);
+            }
+        }
         logger.Write("Moving Cover file ... ");
         var coverFileDestination = Path.Combine(outputDirectory, "Cover.jpg");
         File.Move(coverFile, coverFileDestination);
@@ -90,7 +108,60 @@ internal class AaxAudioConvertor
 
         // https://github.com/inAudible-NG/tables
     }
+    private void CreateM4bFile(string outputDirectory, AaxInfoDto aaxInfo, string coverFile)
+    {
+        var logger = new Logger(_quietMode);
+        var title = CleanTitle(aaxInfo.Format.format?.tags?.title);
+        var m4bFilePath = Path.Combine(outputDirectory, $"{title}.m4b");
 
+        logger.Write("Creating M4B file... ");
+
+        // Combine all MP3 files into a single M4B file
+        var mp3Files = Directory.GetFiles(outputDirectory, "*.mp3").OrderBy(f => f).ToList();
+        var ffmpegArgs = $"-i \"concat:{string.Join('|', mp3Files)}\" -i \"{coverFile}\" -map 0:a -map 1 " +
+                         $"-c:a aac -b:a {_bitrate}k -c:v copy -f mp4 " +
+                         $"-metadata title=\"{title}\" " +
+                         $"-metadata artist=\"{aaxInfo.Format.format?.tags?.artist}\" ";
+
+        // Add chapter metadata
+        if (aaxInfo.Chapters.chapters != null)
+        {
+            double totalDuration = 0;
+            foreach (var chapter in aaxInfo.Chapters.chapters)
+            {
+                ffmpegArgs += $"-metadata:s:a:0 \"chapter #{chapter.id + 1}={TimeSpan.FromSeconds(totalDuration):hh\\:mm\\:ss.fff}\" ";
+                totalDuration += chapter.end - chapter.start;
+            }
+        }
+
+        ffmpegArgs += $"\"{m4bFilePath}\"";
+
+        var ffmpeg = FFmpeg.Conversions.New().AddParameter(ffmpegArgs).Start();
+        ffmpeg.Wait();
+
+        logger.WriteLine("Done");
+    }
+    private void CreateChapterMetadataFile(List<ChapterDto> chapters, string filePath)
+    {
+        using var writer = new StreamWriter(filePath);
+        writer.WriteLine(";FFMETADATA1");
+        foreach (var chapter in chapters)
+        {
+            writer.WriteLine("[CHAPTER]");
+            writer.WriteLine($"TIMEBASE=1/1000");
+            writer.WriteLine($"START={(long)(chapter.start * 1000)}");
+            writer.WriteLine($"END={(long)(chapter.end * 1000)}");
+            writer.WriteLine($"title={chapter.tags?.title}");
+        }
+    }
+
+    private void DeleteMp3Files(string outputDirectory)
+    {
+        foreach (var file in Directory.GetFiles(outputDirectory, "*.mp3"))
+        {
+            File.Delete(file);
+        }
+    }
     private void PurgeOutputDirectory(string outputDirectory)
     {
         if (Directory.Exists(outputDirectory))
@@ -123,51 +194,43 @@ internal class AaxAudioConvertor
     }
 
     private string ProcessChapters(string filepath, AaxInfoDto aaxInfoDto, string coverPath)
+{
+    var logger = new Logger(_quietMode);
+    var outputFolder = _outputFolder;
+    var filePath = filepath;
+    var title = CleanTitle(aaxInfoDto.Format.format?.tags?.title);
+    var author = CleanAuthor(aaxInfoDto.Format.format?.tags?.artist!);
+    var outputDirectory = Path.Combine(outputFolder, author);
+    outputDirectory = Path.Combine(outputDirectory, title ?? string.Empty);
+    var invalidPathChars = Path.GetInvalidPathChars();
+    foreach (var c in invalidPathChars) outputDirectory = outputDirectory.Replace(c, '_');
+
+    PurgeOutputDirectory(outputDirectory);
+
+    Directory.CreateDirectory(outputDirectory);
+    var chapterCount = aaxInfoDto.Chapters.chapters?.Count ?? 0;
+    string formatString = chapterCount > 100 ? "D3" : (chapterCount > 10 ? "D2" : "D1");
+
+    logger.WriteLine($"Processing {title} with {chapterCount} Chapters");
+    
+    if (aaxInfoDto.Chapters.chapters != null)
     {
-        var logger = new Logger(_quietMode);
-        var outputFolder = _outputFolder;
-        var filePath = filepath;
-        var title = CleanTitle(aaxInfoDto.format.format?.tags?.title);
-        var author = CleanAuthor(aaxInfoDto.format.format?.tags?.artist!);
-        var outputDirectory = Path.Combine(outputFolder, author);
-        outputDirectory = Path.Combine(outputDirectory, title ?? string.Empty);
-        var m3UFileName = $"{title}.m3u";
-
-        var invalidPathChars = Path.GetInvalidPathChars();
-        foreach (var c in invalidPathChars) outputDirectory = outputDirectory.Replace(c, '_');
-
-        PurgeOutputDirectory(outputDirectory);
-
-        Directory.CreateDirectory(outputDirectory);
-        var m3UFilePath = Path.Combine(outputDirectory, m3UFileName);
-        var m3UFile = new StreamWriter(m3UFilePath);
-        var chapterCount = aaxInfoDto.chapters.chapters.Count;
-        string formatString;
-
-        if (chapterCount > 100)
-            formatString = "D3";
-        else if (chapterCount > 10)
-            formatString = "D2";
-        else
-            formatString = "D1";
-
-        logger.WriteLine($"Processing {title} with {chapterCount} Chapters");
-
-        InitM3U(m3UFile);
-
-        foreach (var c in aaxInfoDto.chapters.chapters)
+        for (int i = 0; i < chapterCount; i++)
         {
-            var startChapter = c.start_time;
-            var endChapter = c.end_time;
-            var chapterNumber = c.id + 1; // zero based
+            var c = aaxInfoDto.Chapters.chapters[i];
+            var startChapter = c.startTime;
+            var endChapter = c.endTime;
+            var chapterNumber = i + 1; // zero-based to one-based
             var chapterFileTitle = c.tags?.title?.Trim();
-            var chapterFile = title + "-" + chapterNumber.ToString(formatString) + "-" + chapterFileTitle + ".mp3";
+            var chapterFile = $"{title}-{chapterNumber.ToString(formatString)}.mp3";
             var chapterFilePath = Path.Combine(outputDirectory, chapterFile);
-            logger.Write($"\rWriting Chapter {c.id + 1} ...  ");
+            logger.Write($"\rWriting Chapter {chapterNumber} ...  ");
 
             var ffmpeg = FFmpeg.Conversions.New()
                 .AddParameter(
-                    $" -i \"{filePath}\" -ss \"{startChapter}\" -to \"{endChapter}\" -acodec mp3 \"{chapterFilePath}\""
+                    $" -i \"{filePath}\" -ss \"{startChapter}\" -to \"{endChapter}\" -acodec mp3 " +
+                    $"-metadata track=\"{chapterNumber}/{chapterCount}\" " +
+                    $"-metadata chapter=\"{chapterNumber}\" \"{chapterFilePath}\""
                 )
                 .Start();
 
@@ -177,52 +240,74 @@ internal class AaxAudioConvertor
                 Thread.Sleep(100);
             }
 
-            // Encode MP3 tags and cover here // write m3u file as well at the same time
-
-            UpdateM3UAndTagFile(m3UFile, chapterFilePath, aaxInfoDto, coverPath, c);
+            UpdateTagFile(chapterFilePath, aaxInfoDto, coverPath, c, chapterNumber, chapterCount);
 
             logger.WriteLine("\bDone");
         }
-
-        m3UFile.Close();
-        return outputDirectory;
     }
 
-    private void InitM3U(StreamWriter m3UFile)
+    return outputDirectory;
+}
+    
+
+private void UpdateTagFile(string chapterFile, AaxInfoDto aaxInfoDto, string coverPath,
+    ChapterDto chapter, int chapterNumber, int totalChapters)
+{
+    var tagFile = TagLib.File.Create(chapterFile);
+    var title = CleanTitle(aaxInfoDto.Format.format?.tags?.title);
+
+    // Remove existing tags and create a new ID3v2 tag
+    tagFile.RemoveTags(TagTypes.Id3v1);
+    var id3v2Tag = tagFile.GetTag(TagTypes.Id3v2, true) as TagLib.Id3v2.Tag;
+    if (id3v2Tag == null)
     {
-        // ReSharper disable once StringLiteralTypo
-        m3UFile.WriteLine("# EXTM3U");
+        throw new InvalidOperationException("Failed to create or retrieve ID3v2 tag.");
     }
 
-    private void UpdateM3UAndTagFile(StreamWriter m3UFile, string chapterFile, AaxInfoDto aaxInfoDto, string coverPath,
-        Chapter chapter)
+    // Set standard tags
+    id3v2Tag.Title = $"{title} - Chapter {chapterNumber}: {chapter.tags?.title}";
+    id3v2Tag.AlbumArtists = new[] { aaxInfoDto.Format.format?.tags?.artist };
+    id3v2Tag.Album = title;
+    id3v2Tag.Track = (uint)chapterNumber;
+    id3v2Tag.TrackCount = (uint)totalChapters;
+    id3v2Tag.Year = (uint)(aaxInfoDto.Format.format?.tags?.creationTime.Year ?? 0);
+    id3v2Tag.Genres = new[] { aaxInfoDto.Format.format?.tags?.genre };
+    id3v2Tag.Copyright = aaxInfoDto.Format.format?.tags?.copyright;
+    id3v2Tag.Comment = aaxInfoDto.Format.format?.tags?.comment;
+
+    // Set custom frames for chapter information
+    id3v2Tag.SetTextFrame("TCHP", chapterNumber.ToString()); // Custom frame for chapter number
+    id3v2Tag.SetTextFrame("TCHN", totalChapters.ToString()); // Custom frame for total chapters
+
+    // Add chapter information in the comment
+    var chapterInfo = $"Chapter {chapterNumber}/{totalChapters}: {chapter.tags?.title} " +
+                      $"(Start: {TimeSpan.FromSeconds(chapter.start):hh\\:mm\\:ss}, " +
+                      $"End: {TimeSpan.FromSeconds(chapter.end):hh\\:mm\\:ss})";
+    id3v2Tag.Comment = (id3v2Tag.Comment + "\n" + chapterInfo).Trim();
+
+    // Add cover art
+    if (File.Exists(coverPath))
     {
-        var tagFile = TagLib.File.Create(chapterFile);
-        var title = CleanTitle(aaxInfoDto.format.format?.tags?.title);
-        m3UFile.WriteLine(
-            $"# EXTINF:{tagFile.Properties.Duration.TotalSeconds:0F},{aaxInfoDto.format.format?.tags?.title} - {chapter.tags?.title}");
-        m3UFile.WriteLine(Path.GetFileName(chapterFile));
-
-        var coverPicture = new PictureLazy(coverPath);
-        tagFile.Tag.Pictures = new IPicture[] { coverPicture };
-
-        tagFile.Tag.Title = title + " - " + chapter.tags?.title;
-        tagFile.Tag.AlbumArtists = new[] { aaxInfoDto.format.format?.tags?.artist };
-        tagFile.Tag.Album = title;
-        tagFile.Tag.Track = (uint)chapter.id + 1;
-        tagFile.Tag.TrackCount = (uint)aaxInfoDto.chapters.chapters.Count;
-
-        tagFile.Tag.Copyright = aaxInfoDto.format.format?.tags?.copyright;
-        tagFile.Tag.DateTagged = aaxInfoDto.format.format?.tags?.creation_time;
-        tagFile.Tag.Comment = aaxInfoDto.format.format?.tags?.comment;
-        tagFile.Tag.Description = aaxInfoDto.format.format?.tags?.comment;
-        tagFile.Tag.Genres = new[] { aaxInfoDto.format.format?.tags?.genre };
-        tagFile.Tag.Publisher = "";
-        if (aaxInfoDto.format.format != null) tagFile.Tag.Year = (uint)aaxInfoDto.format.format.tags!.creation_time.Year;
-
-        tagFile.Save();
+        var coverPicture = new Picture(coverPath)
+        {
+            Type = PictureType.FrontCover,
+            Description = "Cover",
+            MimeType = System.Net.Mime.MediaTypeNames.Image.Jpeg
+        };
+        id3v2Tag.Pictures = new IPicture[] { coverPicture };
     }
 
+    // Add a custom frame for chapter metadata
+    var chapterFrame = new UserTextInformationFrame("CHAP")
+    {
+        Description = "Chapter Information",
+        Text = new[] { $"{chapterNumber}/{totalChapters}:{chapter.start}:{chapter.end}:{chapter.tags?.title}" }
+    };
+    id3v2Tag.AddFrame(chapterFrame);
+
+    // Save the changes
+    tagFile.Save();
+}
     private string CleanAuthor(string name)
     {
         if (string.IsNullOrEmpty(name)) return "Unknown";
@@ -301,11 +386,11 @@ internal class AaxAudioConvertor
 
         logger.Write(".");
 
-        var audioFormat = JsonSerializer.Deserialize<AudioFormat>(formatJson, new JsonSerializerOptions
+        var audioFormat = JsonSerializer.Deserialize<AudioFormatDto>(formatJson, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
         });
-        var audioChapters = JsonSerializer.Deserialize<AudioChapters>(chaptersJson, new JsonSerializerOptions
+        var audioChapters = JsonSerializer.Deserialize<AudioChaptersDto>(chaptersJson, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
         });

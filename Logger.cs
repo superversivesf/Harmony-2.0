@@ -3,7 +3,16 @@
 internal class Logger
 {
     private readonly bool _quietMode;
-    private readonly string _spinnerString = "/-\\|";
+    //private readonly string _spinnerString = "/-\\|";
+    //private readonly string _spinnerString = "⣾⣽⣻⢿⡿⣟⣯⣷";
+    //private readonly string _spinnerString = "🌑🌒🌓🌔🌕🌖🌗🌘";
+    //private readonly string _spinnerString = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+    private readonly string _spinnerString = "←↖↑↗→↘↓↙";
+    //private readonly string _spinnerString = "▁▂▃▄▅▆▇█▇▆▅▄▃▂";
+    //private readonly string _spinnerString = "▉▊▋▌▍▎▏▎▍▌▋▊▉";
+
+
+
 
     private int _spinnerPos;
     //private string spinnerString = ".oO0Oo";

@@ -1,15 +1,22 @@
-﻿namespace Harmony.Dto;
+﻿using System.Text.Json.Serialization;
 
-internal class AaxInfoDto
+namespace Harmony.Dto;
+
+public class AaxInfoDto
 {
-    public AaxInfoDto(AudioFormat.AudioFormat audioFormat, AudioChapters.AudioChapters audioChaptersDto, AudioStream.AudioStream audioStreams)
-    {
-        format = audioFormat;
-        chapters = audioChaptersDto;
-        streams = audioStreams;
-    }
+    [JsonPropertyName("format")]
+    public AudioFormatDto Format { get; set; }
 
-    public AudioFormat.AudioFormat format { get; set; }
-    public AudioChapters.AudioChapters chapters { get; set; }
-    public AudioStream.AudioStream streams { get; set; }
+    [JsonPropertyName("chapters")]
+    public AudioChaptersDto Chapters { get; set; }
+
+    [JsonPropertyName("streams")]
+    public AudioStreamDto Streams { get; set; }
+
+    public AaxInfoDto(AudioFormatDto audioFormat, AudioChaptersDto audioChapters, AudioStreamDto audioStreams)
+    {
+        Format = audioFormat;
+        Chapters = audioChapters;
+        Streams = audioStreams;
+    }
 }

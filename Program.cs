@@ -64,10 +64,36 @@ internal static class Program
 
         do
         {
-            var aaxProcessor = new AaxAudioConvertor(activationBytes!, bitrate, quietMode, inputFolder!, outputFolder!,
-                storageFolder!, workingFolder!);
+            if (options.outputFormat == "m4b")
+            {
+                var aaxTom4bProcessor = new AaxToM4BConvertor(activationBytes!,
+                    bitrate,
+                    quietMode,
+                    inputFolder!,
+                    outputFolder!,
+                    storageFolder!,
+                    workingFolder!);
+                aaxTom4bProcessor.Execute();
+            }
+            else
+            {
 
-            aaxProcessor.Execute();
+
+                var aaxProcessor = new AaxAudioConvertor(
+                    activationBytes!,
+                    bitrate,
+                    quietMode,
+                    inputFolder!,
+                    outputFolder!,
+                    storageFolder!,
+                    workingFolder!,
+                    options.outputFormat,
+                    options.keepMp3
+                );
+
+
+                aaxProcessor.Execute();
+            }
 
             if (loopMode)
             {
@@ -118,5 +144,13 @@ internal static class Program
                 "Have the program run to completion then check and run again with a 5 minute sleep between each run",
             Default = false)]
         public bool loopMode { get; set; }
+        
+        [Option('m', "OutputFormat", Required = false, 
+            HelpText = "Output format: 'mp3' (default) or 'm4b'", Default = "mp3")]
+        public string outputFormat { get; set; } = "mp3";
+
+        [Option('k', "KeepMp3", Required = false,
+            HelpText = "Keep MP3 files when outputting M4B (ignored if OutputFormat is mp3)", Default = false)]
+        public bool keepMp3 { get; set; }
     }
 }
