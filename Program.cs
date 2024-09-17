@@ -64,17 +64,26 @@ internal static class Program
 
         do
         {
+            logger.Write("Fetching Latest FFMpeg ...  ");
+
+            var fetchTask = FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
+            while (!fetchTask.IsCompleted)
+            {
+                logger.AdvanceSpinner();
+                Thread.Sleep(50);
+            }
+
+            logger.WriteLine("\bDone");
             if (options.outputFormat == "m4b")
             {
-                var aaxTom4bProcessor = new AaxToM4BConvertor(activationBytes!,
-                    bitrate,
-                    quietMode,
-                    inputFolder!,
-                    outputFolder!,
-                    storageFolder!,
-                    workingFolder!);
-                aaxTom4bProcessor.Execute();
-            }
+                var converter = new AaxToM4BConverter(
+                    inputFolder: inputFolder!,
+                    outputFolder: outputFolder!,
+                    storageFolder: storageFolder!,
+                    workingFolder: workingFolder!,
+                    quietMode: false
+                );
+                converter.Execute();            }
             else
             {
 

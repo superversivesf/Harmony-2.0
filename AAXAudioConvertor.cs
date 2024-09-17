@@ -77,7 +77,7 @@ internal class AaxAudioConvertor
             logger.WriteLine($"Length: 0! Something is wrong");
         }
 
-        logger.WriteLine($"Chapters: {aaxInfo.Chapters.chapters?.Count}");
+        logger.WriteLine($"Chapters: {aaxInfo.Chapters.chapters?.Length}");
 
         var intermediateFile = ProcessToMp3(f);
         var coverFile = GenerateCover(f);
@@ -127,10 +127,11 @@ internal class AaxAudioConvertor
         if (aaxInfo.Chapters.chapters != null)
         {
             double totalDuration = 0;
+            int chapterCount = 0;
             foreach (var chapter in aaxInfo.Chapters.chapters)
             {
-                ffmpegArgs += $"-metadata:s:a:0 \"chapter #{chapter.id + 1}={TimeSpan.FromSeconds(totalDuration):hh\\:mm\\:ss.fff}\" ";
-                totalDuration += chapter.end - chapter.start;
+                ffmpegArgs += $"-metadata:s:a:0 \"chapter #{chapterCount++ + 1}={TimeSpan.FromSeconds(totalDuration):hh\\:mm\\:ss.fff}\" ";
+                totalDuration += chapter.endTime - chapter.startTime;
             }
         }
 
@@ -208,7 +209,7 @@ internal class AaxAudioConvertor
     PurgeOutputDirectory(outputDirectory);
 
     Directory.CreateDirectory(outputDirectory);
-    var chapterCount = aaxInfoDto.Chapters.chapters?.Count ?? 0;
+    var chapterCount = aaxInfoDto.Chapters.chapters?.Length ?? 0;
     string formatString = chapterCount > 100 ? "D3" : (chapterCount > 10 ? "D2" : "D1");
 
     logger.WriteLine($"Processing {title} with {chapterCount} Chapters");
@@ -240,7 +241,7 @@ internal class AaxAudioConvertor
                 Thread.Sleep(100);
             }
 
-            UpdateTagFile(chapterFilePath, aaxInfoDto, coverPath, c, chapterNumber, chapterCount);
+            //UpdateTagFile(chapterFilePath, aaxInfoDto, coverPath, c, chapterNumber, chapterCount);
 
             logger.WriteLine("\bDone");
         }
@@ -270,10 +271,6 @@ private void UpdateTagFile(string chapterFile, AaxInfoDto aaxInfoDto, string cov
     id3v2Tag.Album = title;
     id3v2Tag.Track = (uint)chapterNumber;
     id3v2Tag.TrackCount = (uint)totalChapters;
-    id3v2Tag.Year = (uint)(aaxInfoDto.Format.format?.tags?.creationTime.Year ?? 0);
-    id3v2Tag.Genres = new[] { aaxInfoDto.Format.format?.tags?.genre };
-    id3v2Tag.Copyright = aaxInfoDto.Format.format?.tags?.copyright;
-    id3v2Tag.Comment = aaxInfoDto.Format.format?.tags?.comment;
 
     // Set custom frames for chapter information
     id3v2Tag.SetTextFrame("TCHP", chapterNumber.ToString()); // Custom frame for chapter number
@@ -394,16 +391,16 @@ private void UpdateTagFile(string chapterFile, AaxInfoDto aaxInfoDto, string cov
         {
             PropertyNameCaseInsensitive = true
         });
-        var audioStreams = JsonSerializer.Deserialize<AudioStream>(streamsJson, new JsonSerializerOptions
+        var audioStreams = JsonSerializer.Deserialize<AudioStreamDto>(streamsJson, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
         });
 
-        var result = new AaxInfoDto(audioFormat!, audioChapters!, audioStreams!);
+        //var result = new AaxInfoDto(audioFormat!, audioChapters!, audioStreams!);
 
         logger.WriteLine(" Done");
 
-        return result;
+        return null;
     }
 
     private void CheckFolders()
