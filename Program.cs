@@ -103,7 +103,7 @@ internal static class Program
                 );
 
 
-                //aaxProcessor.Execute();
+                aaxProcessor.Execute();
             }
 
             if (loopMode)
