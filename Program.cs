@@ -76,12 +76,14 @@ internal static class Program
             logger.WriteLine("\bDone");
             if (options.outputFormat == "m4b")
             {
-                var converter = new AaxToM4BConverter(
-                    inputFolder: inputFolder!,
-                    outputFolder: outputFolder!,
-                    storageFolder: storageFolder!,
-                    workingFolder: workingFolder!,
-                    quietMode: false
+                var converter = new AaxToM4BConvertor(
+                    activationBytes!,
+                    bitrate,
+                    quietMode,
+                    inputFolder!,
+                    outputFolder!,
+                    storageFolder!,
+                    workingFolder!
                 );
                 converter.Execute();            }
             else
@@ -101,7 +103,7 @@ internal static class Program
                 );
 
 
-                aaxProcessor.Execute();
+                //aaxProcessor.Execute();
             }
 
             if (loopMode)
