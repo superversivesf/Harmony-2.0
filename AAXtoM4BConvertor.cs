@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.VisualBasic.FileIO;
 using TagLib;
 using Xabe.FFmpeg;
+using Xabe.FFmpeg.Events;
 using File = System.IO.File;
 
 namespace Harmony
@@ -57,18 +59,50 @@ namespace Harmony
             var intermediateFile = ProcessToM4A(aaxInfo, filePath, outputDirectory);
             var coverFile = GenerateCover(filePath, outputDirectory);
 
-            AddMetadataToM4A(intermediateFile, aaxInfo);
+            AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
             //AddCoverArtToM4A(intermediateFile, coverFile);
 
             var m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
+            File.Move(intermediateFile, m4BFilePath);
 
-            if (File.Exists(m4BFilePath))
+            var analyser = new FFprobeAnalyzer();
+
+            var goodFileCheck = analyser.AnalyzeFile(m4BFilePath);
+            goodFileCheck.Wait();
+
+            if (!goodFileCheck.Result)
             {
+                logger.WriteLine("Problem with file, trying fallback processing");
+                File.Delete(m4BFilePath);
+                outputDirectory = PrepareOutputDirectory(aaxInfo); 
+                intermediateFile = FallbackProcessToM4A(aaxInfo, filePath, outputDirectory); 
+                coverFile = GenerateCover(filePath, outputDirectory);
+
+                AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
+                //AddCoverArtToM4A(intermediateFile, coverFile);
+
+                m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
+                File.Move(intermediateFile, m4BFilePath);
+                
+                // -i /data/havana.mp4 -i metadata -map_metadata 1 -codec copy new_havana.mp4
+
+                logger.Write("Adding Chapters ...      ");
+
+                var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
+                var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapters", String.Empty));
+                var conversion = FFmpeg.Conversions.New()
+                    .AddParameter($"-i \"{m4BFilePath}\" ")
+                    .AddParameter($"-i \"{chapterFile}\" ")
+                    .AddParameter($"-map_metadata 1 -codec copy")
+                    .SetOutput(outputFile);
+                
+                conversion.OnProgress += ProgressMeter;
+                conversion.Start().Wait();
+                
+                File.Delete(chapterFile);
                 File.Delete(m4BFilePath);
             }
             
-            File.Move(intermediateFile, m4BFilePath);
-
             logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
 
             // Move original AAX to storage
@@ -128,48 +162,53 @@ namespace Harmony
             
         }
 
+        private string FallbackProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
+        {
+            var logger = new Logger(_quietMode);
+
+            var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
+            ChapterConverter.CreateChapterFile(aaxInfo, chapterFile);
+            logger.Write("Converting AAX to WAV ...      ");
+            
+            var title = CleanTitle(aaxInfo.format?.tags?.title);
+            var filename = title; 
+            var outputFile = Path.Combine(outputDirectory, filename + ".wav");
+            var conversion = FFmpeg.Conversions.New()
+                //.AddParameter(" -loglevel error -stats")
+                .AddParameter($"-activation_bytes \"{_activationBytes}\" ")
+                .AddParameter($"-i \"{filePath}\" ")
+                .AddParameter("-vn -codec:a pcm_s16le -q:a 0 ")
+                .SetOutput(outputFile);
+
+            conversion.OnProgress += ProgressMeter;
+            conversion.Start().Wait();
+            Console.WriteLine();
+            logger.Write("Converting WAV to M4A...       ");
+
+            filePath = outputFile;
+            outputFile = Path.Combine(outputDirectory, filename + "-nochapters.m4a");
+            conversion = FFmpeg.Conversions.New()
+                .AddParameter($"-i \"{filePath}\" ")
+                .AddParameter("-vn -codec:a aac -b:a 64k ")
+                .SetOutput(outputFile);
+
+            conversion.OnProgress += ProgressMeter;
+            conversion.Start().Wait();
+            
+            File.Delete(filePath);
+            //File.Delete(chapterFile);
+            Console.WriteLine();
+            
+            //File.Delete(filePath);
+            //File.Delete(chapterFile);
+            
+            return outputFile;
+        }
+        
         private string ProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
             var logger = new Logger(_quietMode);
-            logger.Write("Converting AAX to M4A... ");
-            
-            /*
-             2024-09-22 20:28:58+0000 DEBUG Book and Variable values
-               =Start==========================================================================
-               title                 = A Brief History of the Philosophy of Time
-               auth_code             = 8e4ab703
-               aaxc                  = 0
-               aaxc_key              = 
-               aaxc_iv               = 
-               mode                  = chaptered
-               aax_file              = ABriefHistoryofthePhilosophyofTime_ep6.aax
-               container             = mp4
-               codec                 = copy
-               bitrate               = 64k
-               artist                = Adrian Bardon
-               album_artist          = Adrian Bardon
-               album                 = A Brief History of the Philosophy of Time
-               album_date            = 2014
-               genre                 = Audiobook
-               copyright             = ©2013 Oxford University Press (P)2014 Audible Inc.
-               narrator              = 
-               description           = 
-               publisher             = 
-               currentDirNameScheme  = Audiobook/Adrian Bardon/A Brief History of the Philosophy of Time
-               output_directory      = ./Audiobook/Adrian Bardon/A Brief History of the Philosophy of Time
-               currentFileNameScheme = A Brief History of the Philosophy of Time
-               output_file           = ./Audiobook/Adrian Bardon/A Brief History of the Philosophy of Time/A Brief History of the Philosophy of Time.m4b
-               metadata_file         = /tmp/tmp.JNqZMbPPo4/metadata.txt
-               working_directory     = /tmp/tmp.JNqZMbPPo4
-               =End============================================================================
-               2024-09-22 20:28:58+0000 Total length: 05:23:54
-               2024-09-22 20:28:58+0000 DEBUG "$FFMPEG" -loglevel error -stats ${decrypt_param} -i "${aax_file}" -vn -codec:a "${codec}" -ab ${bitrate} -map_metadata -1 -metadata title="${title}" -metadata artist="${artist}" -metadata album_artist="${album_artist}" -metadata album="${album}" -metadata date="${album_date}" -metadata track="1/1" -metadata genre="${genre}" -metadata copyright="${copyright}" "${output_file}"
-               size=  150608kB time=05:23:54.40 bitrate=  63.5kbits/s speed=1.43e+04x    
-               2024-09-22 20:29:00+0000 Created ./Audiobook/Adrian Bardon/A Brief History of the Philosophy of Time/A Brief History of the Philosophy of Time.m4b.
-               2024-09-22
-              
-             */
-            //             var chapterFile = $"{title}-{chapterNumber.ToString(formatString)}.mp3";
+            logger.Write("Converting AAX to M4A...      ");
             
             var title = CleanTitle(aaxInfo.format?.tags?.title);
             var filename = title; 
@@ -180,11 +219,17 @@ namespace Harmony
                 .AddParameter($"-i \"{filePath}\" ")
                 .AddParameter("-vn -codec:a copy -b:a 64k ")
                 .SetOutput(outputFile);
-            
-            conversion.Start().Wait();
 
-            logger.WriteLine("Done");
+            conversion.OnProgress += ProgressMeter;
+            conversion.Start().Wait();
+            Console.WriteLine();
+            
             return outputFile;
+        }
+
+        private void ProgressMeter(object sender, ConversionProgressEventArgs args)
+        {
+            Console.Write("\b\b\b\b\b\b[" + args.Percent.ToString("D3") + "%]");
         }
 
         private string GenerateCover(string filePath, string outputDirectory)
@@ -205,7 +250,7 @@ namespace Harmony
             return coverFile;
         }
 
-        private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo)
+        private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
         {
             var logger = new Logger(_quietMode);
             logger.Write("Adding metadata to M4A... ");
@@ -220,8 +265,7 @@ namespace Harmony
                     tag.Year = uint.Parse(aaxInfo.format.tags.date);
                 tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
                 tag.Copyright = aaxInfo?.format?.tags?.copyright;
-                
-                /*if (File.Exists(coverPath))
+                if (File.Exists(coverPath))
                 {
                     var coverPicture = new Picture(coverPath)
                     {
@@ -230,14 +274,28 @@ namespace Harmony
                         MimeType = System.Net.Mime.MediaTypeNames.Image.Jpeg
                     };
                     tag.Pictures = new IPicture[] { coverPicture };
-                }*/
-                
+                }
+                file.Save();
+            }
+
+            
+            logger.WriteLine("Done");
+        }
+
+        private void AddCoverArtToM4A(string filePath, string coverPath)
+        {
+            var logger = new Logger(_quietMode);
+            logger.Write("Adding cover art to M4A... ");
+
+            using (var file = TagLib.File.Create(filePath))
+            {
+                var picture = new Picture(coverPath);
+                file.Tag.Pictures = new IPicture[] { picture };
                 file.Save();
             }
 
             logger.WriteLine("Done");
         }
-
 
         private string? CleanTitle(string? title)
         {
