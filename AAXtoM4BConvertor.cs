@@ -58,9 +58,15 @@ namespace Harmony
             var coverFile = GenerateCover(filePath, outputDirectory);
 
             AddMetadataToM4A(intermediateFile, aaxInfo);
-            AddCoverArtToM4A(intermediateFile, coverFile);
+            //AddCoverArtToM4A(intermediateFile, coverFile);
 
             var m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
+
+            if (File.Exists(m4BFilePath))
+            {
+                File.Delete(m4BFilePath);
+            }
+            
             File.Move(intermediateFile, m4BFilePath);
 
             logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
@@ -70,7 +76,7 @@ namespace Harmony
             File.Move(filePath, storageFile);
 
             // Cleanup
-            File.Delete(coverFile);
+            //File.Delete(coverFile);
         }
 
         private AaxInfoDto? GetAaxInfo(string filePath)
@@ -214,26 +220,24 @@ namespace Harmony
                     tag.Year = uint.Parse(aaxInfo.format.tags.date);
                 tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
                 tag.Copyright = aaxInfo?.format?.tags?.copyright;
+                
+                /*if (File.Exists(coverPath))
+                {
+                    var coverPicture = new Picture(coverPath)
+                    {
+                        Type = PictureType.FrontCover,
+                        Description = "Cover",
+                        MimeType = System.Net.Mime.MediaTypeNames.Image.Jpeg
+                    };
+                    tag.Pictures = new IPicture[] { coverPicture };
+                }*/
+                
                 file.Save();
             }
 
             logger.WriteLine("Done");
         }
 
-        private void AddCoverArtToM4A(string filePath, string coverPath)
-        {
-            var logger = new Logger(_quietMode);
-            logger.Write("Adding cover art to M4A... ");
-
-            using (var file = TagLib.File.Create(filePath))
-            {
-                var picture = new Picture(coverPath);
-                file.Tag.Pictures = new IPicture[] { picture };
-                file.Save();
-            }
-
-            logger.WriteLine("Done");
-        }
 
         private string? CleanTitle(string? title)
         {
