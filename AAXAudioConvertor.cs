@@ -13,21 +13,20 @@ internal class AaxAudioConvertor
     private readonly string _inputFolder;
     private readonly string _outputFolder;
     private readonly bool _quietMode;
-    private readonly string _storageFolder;
     private readonly string _workingFolder;
     private readonly string _outputFormat;
     private readonly bool _keepMp3;
 
     public AaxAudioConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-        string outputFolder, string storageFolder, string workingFolder, string outputFormat, bool keepMp3)
+        string outputFolder, string outputFormat, bool keepMp3)
     {
+         var tmpDirection = Directory.CreateTempSubdirectory();
+         _workingFolder = tmpDirection.FullName;
         _activationBytes = activationBytes;
         _bitrate = bitrate;
         _quietMode = quietMode;
         _inputFolder = inputFolder;
         _outputFolder = outputFolder;
-        _storageFolder = storageFolder;
-        _workingFolder = workingFolder;
         _outputFormat = outputFormat;
         _keepMp3 = keepMp3;
     }
@@ -43,6 +42,7 @@ internal class AaxAudioConvertor
         var filePaths = Directory.GetFiles(_inputFolder, "*.aax").ToList();
         logger.WriteLine($"Found {filePaths.Count} aax files to process\n");
         ProcessAaxFiles(filePaths);
+        Directory.Delete(_workingFolder, true);
     }
 
     private void ProcessAaxFiles(List<string> filePaths)
@@ -53,7 +53,6 @@ internal class AaxAudioConvertor
     private void ProcessAaxFile(string f)
     {
         var logger = new Logger(_quietMode);
-        var storageFolder = _storageFolder;
 
         var aaxInfo = GetAaxInfo(f);
 
@@ -84,11 +83,6 @@ internal class AaxAudioConvertor
         logger.Write("Moving Cover file ... ");
         var coverFileDestination = Path.Combine(outputDirectory, "Cover.jpg");
         File.Move(coverFile, coverFileDestination);
-        logger.WriteLine("Done");
-
-        logger.Write("Moving AAX file to storage ... ");
-        var storageFile = Path.Combine(storageFolder, Path.GetFileName(f));
-        File.Move(f, storageFile);
         logger.WriteLine("Done");
 
         // Cleanup 
@@ -351,9 +345,7 @@ private void UpdateTagFile(string chapterFile, AaxInfoDto aaxInfoDto, string cov
         if (!Directory.Exists(_inputFolder)) throw new Exception("Input folder does not exist: " + _inputFolder);
 
         if (!Directory.Exists(_outputFolder)) throw new Exception("Output folder does not exist: " + _inputFolder);
-
-        if (!Directory.Exists(_storageFolder)) throw new Exception("Storage folder does not exist: " + _inputFolder);
-
+        
         if (!Directory.Exists(_workingFolder)) throw new Exception("Working folder does not exist: " + _inputFolder);
 
         var di = new DirectoryInfo(_workingFolder);

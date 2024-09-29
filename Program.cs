@@ -1,5 +1,9 @@
-﻿using System.Reflection;
+﻿using System.Globalization;
+using System.Reflection;
 using CommandLine;
+using CsvHelper;
+using CsvHelper.Configuration;
+using Harmony.Dto;
 using Xabe.FFmpeg.Downloader;
 
 // ReSharper disable UnusedAutoPropertyAccessor.Global
@@ -33,13 +37,12 @@ internal static class Program
 
     private static void RunOptions(Options options)
     {
+        var clobber = options.clobber;
         var activationBytes = options.activationBytes;
         var bitrate = options.bitrate;
         var inputFolder = options.inputFolder;
         var outputFolder = options.outputFolder;
-        var storageFolder = options.storageFolder;
         var quietMode = options.quietMode;
-        var workingFolder = options.workingFolder;
         var logger = new Logger(quietMode);
         var loopMode = options.loopMode;
 
@@ -65,8 +68,8 @@ internal static class Program
         do
         {
             logger.Write("Fetching Latest FFMpeg ...  ");
-
             var fetchTask = FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
+            
             while (!fetchTask.IsCompleted)
             {
                 logger.AdvanceSpinner();
@@ -74,6 +77,20 @@ internal static class Program
             }
 
             logger.WriteLine("\bDone");
+
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture);
+            config.Delimiter = "\t";
+            var libraryFile = Path.Combine(options.inputFolder, "library.tsv");
+            List<AudibleLibraryDto> library = null;
+            if (File.Exists(libraryFile))
+            {
+                using (var reader = new StreamReader(libraryFile))
+                using (var csv = new CsvReader(reader, config))
+                { 
+                    library = csv.GetRecords<AudibleLibraryDto>().ToList();
+                }
+            }
+            
             if (options.outputFormat == "m4b")
             {
                 var converter = new AaxToM4BConvertor(
@@ -82,8 +99,9 @@ internal static class Program
                     quietMode,
                     inputFolder!,
                     outputFolder!,
-                    storageFolder!,
-                    workingFolder!
+                    clobber,
+                    library
+                    
                 );
                 converter.Execute();            }
             else
@@ -96,8 +114,6 @@ internal static class Program
                     quietMode,
                     inputFolder!,
                     outputFolder!,
-                    storageFolder!,
-                    workingFolder!,
                     options.outputFormat,
                     options.keepMp3
                 );
@@ -120,6 +136,10 @@ internal static class Program
     // ReSharper disable once MemberCanBePrivate.Global
     public class Options
     {
+        [Option('c', "Clobber", Required = false,
+            HelpText = "The bitrate in kilobits for the output files. Defaults to 64k, specified as 64", Default = false)]
+        public bool clobber { get; set; }
+        
         [Option('b', "Bitrate", Required = false,
             HelpText = "The bitrate in kilobits for the output files. Defaults to 64k, specified as 64", Default = 64)]
         public int bitrate { get; set; }
@@ -129,14 +149,7 @@ internal static class Program
 
         [Option('o', "OutputFolder", Required = false, HelpText = "The folder that will contain your MP3 files")]
         public string? outputFolder { get; set; } = null;
-
-        [Option('s', "StorageFolder", Required = false, HelpText = "Folder that finished AAX files will be moved too")]
-        public string? storageFolder { get; set; } = null;
-
-        [Option('w', "WorkingFolder", Required = false,
-            HelpText = "Temp folder that will be used for processing everything. Emptied at start up")]
-        public string? workingFolder { get; set; } = null;
-
+        
         [Option('a', "ActivationBytes", Required = false,
             HelpText =
                 "Activation bytes for decoding your AAX File. See https://github.com/inAudible-NG/tables for details of how to obtain")]

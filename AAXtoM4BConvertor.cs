@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Harmony.Dto;
 using Microsoft.VisualBasic.FileIO;
 using TagLib;
 using Xabe.FFmpeg;
 using Xabe.FFmpeg.Events;
 using File = System.IO.File;
+using SearchOption = System.IO.SearchOption;
 
 namespace Harmony
 {
@@ -15,19 +18,19 @@ namespace Harmony
         private readonly string _inputFolder;
         private readonly string _outputFolder;
         private readonly bool _quietMode;
-        private readonly string _storageFolder;
-        private readonly string _workingFolder;
+        private List<AudibleLibraryDto>? _library;
+        private readonly bool _clobber;
 
         public AaxToM4BConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-            string outputFolder, string storageFolder, string workingFolder)
+            string outputFolder,bool clobber, List<AudibleLibraryDto>? library = null)
         {
+            _clobber = clobber;
             _activationBytes = activationBytes;
             _bitrate = bitrate;
             _quietMode = quietMode;
             _inputFolder = inputFolder;
             _outputFolder = outputFolder;
-            _storageFolder = storageFolder;
-            _workingFolder = workingFolder;
+            _library = library;
         }
 
         internal void Execute()
@@ -38,7 +41,7 @@ namespace Harmony
             logger.Write("Checking folders and purging working files ... ");
             CheckFolders();
             logger.WriteLine("Done");
-            var filePaths = Directory.GetFiles(_inputFolder, "*.aax");
+            var filePaths = Directory.GetFiles(_inputFolder, "*.aax", SearchOption.AllDirectories);
             logger.WriteLine($"Found {filePaths.Length} aax files to process\n");
             foreach (var filePath in filePaths)
             {
@@ -55,14 +58,20 @@ namespace Harmony
             var aaxInfo = GetAaxInfo(filePath);
             WriteAaxInfo(aaxInfo, logger);
 
-            var outputDirectory = PrepareOutputDirectory(aaxInfo);
+            var regex = new Regex("Part_[0-9]-LC");
+            var boxset = regex.Match(filePath).Success;
+            var outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
             var intermediateFile = ProcessToM4A(aaxInfo, filePath, outputDirectory);
+
+            if (intermediateFile == null)
+                return;
+            
+            var m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
             var coverFile = GenerateCover(filePath, outputDirectory);
 
             AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
             //AddCoverArtToM4A(intermediateFile, coverFile);
 
-            var m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
             File.Move(intermediateFile, m4BFilePath);
 
             var analyser = new FFprobeAnalyzer();
@@ -74,7 +83,7 @@ namespace Harmony
             {
                 logger.WriteLine("Problem with file, trying fallback processing");
                 File.Delete(m4BFilePath);
-                outputDirectory = PrepareOutputDirectory(aaxInfo); 
+                outputDirectory = PrepareOutputDirectory(aaxInfo, boxset); 
                 intermediateFile = FallbackProcessToM4A(aaxInfo, filePath, outputDirectory); 
                 coverFile = GenerateCover(filePath, outputDirectory);
 
@@ -96,7 +105,7 @@ namespace Harmony
                     .AddParameter($"-map_metadata 1 -codec copy")
                     .SetOutput(outputFile);
                 
-                conversion.OnProgress += ProgressMeter;
+                //conversion.OnProgress += ProgressMeter;
                 conversion.Start().Wait();
                 
                 File.Delete(chapterFile);
@@ -106,8 +115,8 @@ namespace Harmony
             logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
 
             // Move original AAX to storage
-            var storageFile = Path.Combine(_storageFolder, Path.GetFileName(filePath));
-            File.Move(filePath, storageFile);
+            //var storageFile = Path.Combine(_storageFolder, Path.GetFileName(filePath));
+            //File.Move(filePath, storageFile);
 
             // Cleanup
             //File.Delete(coverFile);
@@ -152,9 +161,14 @@ namespace Harmony
             if (aaxInfo?.chapters != null) logger.WriteLine($"Chapters: {aaxInfo.chapters.Count}");
         }
 
-        private string PrepareOutputDirectory(AaxInfoDto? aaxInfo)
+        private string PrepareOutputDirectory(AaxInfoDto? aaxInfo, bool boxset)
         {
-            var title = CleanTitle(aaxInfo?.format?.tags?.title);
+            string? title = CleanTitle(aaxInfo?.format?.tags?.title);;
+            if (boxset)
+            { 
+                title = Regex.Replace(title, @"\bPart [1-9]\b", "").Trim();
+            }
+
             var author = CleanAuthor(aaxInfo?.format?.tags?.artist); 
             var outputDirectory = Path.Combine(_outputFolder, author,title);
             Directory.CreateDirectory(outputDirectory);
@@ -180,7 +194,7 @@ namespace Harmony
                 .AddParameter("-vn -codec:a pcm_s16le -q:a 0 ")
                 .SetOutput(outputFile);
 
-            conversion.OnProgress += ProgressMeter;
+            //conversion.OnProgress += ProgressMeter;
             conversion.Start().Wait();
             Console.WriteLine();
             logger.Write("Converting WAV to M4A...       ");
@@ -192,7 +206,7 @@ namespace Harmony
                 .AddParameter("-vn -codec:a aac -b:a 64k ")
                 .SetOutput(outputFile);
 
-            conversion.OnProgress += ProgressMeter;
+            //conversion.OnProgress += ProgressMeter;
             conversion.Start().Wait();
             
             File.Delete(filePath);
@@ -205,7 +219,7 @@ namespace Harmony
             return outputFile;
         }
         
-        private string ProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
+        private string? ProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
             var logger = new Logger(_quietMode);
             logger.Write("Converting AAX to M4A...      ");
@@ -213,6 +227,24 @@ namespace Harmony
             var title = CleanTitle(aaxInfo.format?.tags?.title);
             var filename = title; 
             var outputFile = Path.Combine(outputDirectory, filename + ".m4a");
+
+            var m4BFilePath = Path.ChangeExtension(outputFile, "m4b");
+
+            if (File.Exists(m4BFilePath) && this._clobber)
+            {
+                File.Delete(m4BFilePath);
+            }
+            else if (File.Exists(m4BFilePath))
+            {
+                return null;
+            }
+
+            
+            if (File.Exists(outputFile))
+            {
+                File.Delete(outputFile);
+            }
+            
             var conversion = FFmpeg.Conversions.New()
                 //.AddParameter(" -loglevel error -stats")
                 .AddParameter($"-activation_bytes \"{_activationBytes}\" ")
@@ -220,7 +252,7 @@ namespace Harmony
                 .AddParameter("-vn -codec:a copy -b:a 64k ")
                 .SetOutput(outputFile);
 
-            conversion.OnProgress += ProgressMeter;
+            //conversion.OnProgress += ProgressMeter;
             conversion.Start().Wait();
             Console.WriteLine();
             
@@ -254,17 +286,45 @@ namespace Harmony
         {
             var logger = new Logger(_quietMode);
             logger.Write("Adding metadata to M4A... ");
-
+            
             using (var file = TagLib.File.Create(filePath))
             {
                 var tag = file.GetTag(TagTypes.Apple);
-                tag.Title = aaxInfo?.format?.tags?.title;
-                tag.Performers = new[] { aaxInfo?.format?.tags?.artist};
-                tag.Album = aaxInfo?.format?.tags?.album;
-                if (aaxInfo?.format?.tags?.date != null)
-                    tag.Year = uint.Parse(aaxInfo.format.tags.date);
-                tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
-                tag.Copyright = aaxInfo?.format?.tags?.copyright;
+                bool found = false;
+                if (this._library != null)
+                {
+                    _library = _library.Where(x => x.authors.Contains("Nathan Van Coops")).OrderBy(x => x.authors).ToList();
+                    var regex = new Regex("Part [0-9]");
+                    var boxset = regex.Match(aaxInfo?.format.tags.title).Success;
+                    var titleString = boxset ? Regex.Replace(aaxInfo?.format.tags.title, @"\bPart [1-9]\b", "").Trim(): aaxInfo?.format.tags.title;
+                    var data = _library.FirstOrDefault(x => titleString == x.title);
+                    if (data != null)
+                    {
+                        found = true;
+
+                        tag.Copyright = aaxInfo.format.tags.copyright;
+                        tag.AlbumArtists = data.authors.Split(",");
+                        tag.Title = data.title;
+                        tag.Album = data.title;
+                        tag.Subtitle = data.subtitle;
+                        tag.Year = (uint) data.release_date.Year;
+                        tag.Composers = data.narrators.Split(",");
+                        tag.Description = data.extended_product_description;
+                        tag.Genres = data.genres.Split(",");
+                        tag.AmazonId = data.asin;
+                    }
+                }
+                
+                if (!found)
+                {
+                    tag.Title = aaxInfo?.format?.tags?.title;
+                    tag.Performers = new[] { aaxInfo?.format?.tags?.artist};
+                    tag.Album = aaxInfo?.format?.tags?.album;
+                    if (aaxInfo?.format?.tags?.date != null)
+                        tag.Year = uint.Parse(aaxInfo.format.tags.date);
+                    tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
+                    tag.Copyright = aaxInfo?.format?.tags?.copyright;
+                }
                 if (File.Exists(coverPath))
                 {
                     var coverPicture = new Picture(coverPath)
@@ -277,26 +337,9 @@ namespace Harmony
                 }
                 file.Save();
             }
-
-            
             logger.WriteLine("Done");
         }
-
-        private void AddCoverArtToM4A(string filePath, string coverPath)
-        {
-            var logger = new Logger(_quietMode);
-            logger.Write("Adding cover art to M4A... ");
-
-            using (var file = TagLib.File.Create(filePath))
-            {
-                var picture = new Picture(coverPath);
-                file.Tag.Pictures = new IPicture[] { picture };
-                file.Save();
-            }
-
-            logger.WriteLine("Done");
-        }
-
+        
         private string? CleanTitle(string? title)
         {
             return title?.Replace("(Unabridged)", string.Empty).Replace(":", " -").Replace("'", string.Empty)
@@ -317,13 +360,7 @@ namespace Harmony
         {
             if (!Directory.Exists(_inputFolder)) throw new Exception("Input folder does not exist: " + _inputFolder);
             if (!Directory.Exists(_outputFolder)) throw new Exception("Output folder does not exist: " + _outputFolder);
-            if (!Directory.Exists(_storageFolder)) throw new Exception("Storage folder does not exist: " + _storageFolder);
-            if (!Directory.Exists(_workingFolder)) throw new Exception("Working folder does not exist: " + _workingFolder);
-
-            foreach (var file in Directory.GetFiles(_workingFolder))
-            {
-                File.Delete(file);
-            }
+            
         }
     }
 }
