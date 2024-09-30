@@ -10,7 +10,6 @@ public class FFprobeAnalyzer
     {
         try
         {
-            
             IMediaInfo mediaInfo = await FFmpeg.GetMediaInfo(filePath);
 
             // Check if the file can be read
@@ -19,8 +18,7 @@ public class FFprobeAnalyzer
                 return false;
             }
 
-            var newProbe = Probe.New();
-            var result= await newProbe.Start('"' + filePath + '"');
+            var result= await Probe.New().Start(" -loglevel quiet " + filePath + '"');
             
             return true;
         }

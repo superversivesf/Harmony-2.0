@@ -101,7 +101,6 @@ internal static class Program
                     outputFolder!,
                     clobber,
                     library
-                    
                 );
                 converter.Execute();            }
             else
@@ -137,7 +136,7 @@ internal static class Program
     public class Options
     {
         [Option('c', "Clobber", Required = false,
-            HelpText = "The bitrate in kilobits for the output files. Defaults to 64k, specified as 64", Default = false)]
+            HelpText = "Delete or skip existing output files?", Default = false)]
         public bool clobber { get; set; }
         
         [Option('b', "Bitrate", Required = false,

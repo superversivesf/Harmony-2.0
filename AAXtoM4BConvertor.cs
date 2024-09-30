@@ -66,11 +66,12 @@ namespace Harmony
             if (intermediateFile == null)
                 return;
             
-            var m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
+            var m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
             var coverFile = GenerateCover(filePath, outputDirectory);
-
+            var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
+            ChapterConverter.CreateChapterFile(filePath, aaxInfo, chapterFile);
+            
             AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
-            //AddCoverArtToM4A(intermediateFile, coverFile);
 
             File.Move(intermediateFile, m4BFilePath);
 
@@ -88,29 +89,28 @@ namespace Harmony
                 coverFile = GenerateCover(filePath, outputDirectory);
 
                 AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
-                //AddCoverArtToM4A(intermediateFile, coverFile);
 
-                m4BFilePath = Path.ChangeExtension(intermediateFile, "m4b");
+                m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
                 File.Move(intermediateFile, m4BFilePath);
-                
-                // -i /data/havana.mp4 -i metadata -map_metadata 1 -codec copy new_havana.mp4
-
-                logger.Write("Adding Chapters ...      ");
-
-                var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
-                var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapters", String.Empty));
-                var conversion = FFmpeg.Conversions.New()
-                    .AddParameter($"-i \"{m4BFilePath}\" ")
-                    .AddParameter($"-i \"{chapterFile}\" ")
-                    .AddParameter($"-map_metadata 1 -codec copy")
-                    .SetOutput(outputFile);
-                
-                //conversion.OnProgress += ProgressMeter;
-                conversion.Start().Wait();
-                
-                File.Delete(chapterFile);
-                File.Delete(m4BFilePath);
             }
+
+            logger.Write("Adding Chapters ...      ");
+
+            var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapter", String.Empty));
+            var conversion = FFmpeg.Conversions.New()
+                .AddParameter($"-i \"{m4BFilePath}\" ")
+                .AddParameter($"-i \"{chapterFile}\" ")
+                .AddParameter($"-map_metadata 1 -codec copy")
+                .SetOutput(outputFile);
+                
+            //conversion.OnProgress += ProgressMeter;
+            conversion.Start().Wait();
+                
+            logger.WriteLine("Done");
+            
+            File.Delete(chapterFile);
+            File.Delete(m4BFilePath);
+            
             
             logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
 
@@ -180,8 +180,6 @@ namespace Harmony
         {
             var logger = new Logger(_quietMode);
 
-            var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
-            ChapterConverter.CreateChapterFile(aaxInfo, chapterFile);
             logger.Write("Converting AAX to WAV ...      ");
             
             var title = CleanTitle(aaxInfo.format?.tags?.title);
@@ -200,7 +198,7 @@ namespace Harmony
             logger.Write("Converting WAV to M4A...       ");
 
             filePath = outputFile;
-            outputFile = Path.Combine(outputDirectory, filename + "-nochapters.m4a");
+            outputFile = Path.Combine(outputDirectory, filename + ".m4a");
             conversion = FFmpeg.Conversions.New()
                 .AddParameter($"-i \"{filePath}\" ")
                 .AddParameter("-vn -codec:a aac -b:a 64k ")
@@ -232,10 +230,13 @@ namespace Harmony
 
             if (File.Exists(m4BFilePath) && this._clobber)
             {
+                logger.WriteLine("\nFile Already Exists ... Deleting");
+
                 File.Delete(m4BFilePath);
             }
             else if (File.Exists(m4BFilePath))
             {
+                logger.WriteLine("\nFile Already Exists ... Skipping");
                 return null;
             }
 
@@ -249,7 +250,7 @@ namespace Harmony
                 //.AddParameter(" -loglevel error -stats")
                 .AddParameter($"-activation_bytes \"{_activationBytes}\" ")
                 .AddParameter($"-i \"{filePath}\" ")
-                .AddParameter("-vn -codec:a copy -b:a 64k ")
+                .AddParameter("-map_chapters -1 -vn -codec:a copy -b:a 64k ")
                 .SetOutput(outputFile);
 
             //conversion.OnProgress += ProgressMeter;
@@ -289,9 +290,11 @@ namespace Harmony
             
             using (var file = TagLib.File.Create(filePath))
             {
-                var tag = file.GetTag(TagTypes.Apple);
+                //var tag = file.GetTag(TagTypes.Apple);
+                var tag = file.GetTag(TagTypes.Id3v2);
+                
                 bool found = false;
-                if (this._library != null)
+                if (_library != null)
                 {
                     _library = _library.Where(x => x.authors.Contains("Nathan Van Coops")).OrderBy(x => x.authors).ToList();
                     var regex = new Regex("Part [0-9]");
@@ -312,6 +315,7 @@ namespace Harmony
                         tag.Description = data.extended_product_description;
                         tag.Genres = data.genres.Split(",");
                         tag.AmazonId = data.asin;
+                        
                     }
                 }
                 
