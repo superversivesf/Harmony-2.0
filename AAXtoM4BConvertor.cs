@@ -316,9 +316,9 @@ namespace Harmony
 
                     lookupTable.TryGetValue(processedTitleString, out var dataList);
 
-                    var data = dataList.Count == 1 ? dataList[0] : null;
+                    var data = dataList?.Count == 1 ? dataList[0] : null;
                     
-                    if (dataList.Count > 1)
+                    if (dataList?.Count > 1)
                         logger.WriteLine("Duplicate Title Found -> " + titleString);
                     
                     if (data != null)
