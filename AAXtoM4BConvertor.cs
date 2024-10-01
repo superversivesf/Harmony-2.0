@@ -270,7 +270,7 @@ namespace Harmony
             var logger = new Logger(_quietMode);
             logger.Write("Extracting cover art... ");
 
-            var coverFile = Path.Combine(outputDirectory, "cover.jpg");
+            var coverFile = Path.Combine(outputDirectory, "Cover.jpg");
             var conversion = FFmpeg.Conversions.New()
                 .AddParameter($"-activation_bytes {_activationBytes}")
                 .AddParameter($"-i \"{filePath}\"")
@@ -283,6 +283,11 @@ namespace Harmony
             return coverFile;
         }
 
+        string ProcessTitleForComparison(string input)
+        {
+            return Regex.Replace(input.ToLowerInvariant(), @"[^a-z0-9]", "");
+        }
+        
         private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
         {
             var logger = new Logger(_quietMode);
@@ -290,21 +295,35 @@ namespace Harmony
             
             using (var file = TagLib.File.Create(filePath))
             {
-                //var tag = file.GetTag(TagTypes.Apple);
-                var tag = file.GetTag(TagTypes.Id3v2);
+                var tag = file.GetTag(TagTypes.Apple);
                 
                 bool found = false;
                 if (_library != null)
                 {
-                    _library = _library.Where(x => x.authors.Contains("Nathan Van Coops")).OrderBy(x => x.authors).ToList();
+                    var lookupTable =  _library
+                        .GroupBy(dto => ProcessTitleForComparison(dto.title + dto.subtitle))
+                        .ToDictionary(
+                            group => group.Key,
+                            group => group.ToList()
+                        );
+
+                    
                     var regex = new Regex("Part [0-9]");
                     var boxset = regex.Match(aaxInfo?.format.tags.title).Success;
                     var titleString = boxset ? Regex.Replace(aaxInfo?.format.tags.title, @"\bPart [1-9]\b", "").Trim(): aaxInfo?.format.tags.title;
-                    var data = _library.FirstOrDefault(x => titleString == x.title);
+                    
+                    string processedTitleString = ProcessTitleForComparison(titleString);
+
+                    lookupTable.TryGetValue(processedTitleString, out var dataList);
+
+                    var data = dataList.Count == 1 ? dataList[0] : null;
+                    
+                    if (dataList.Count > 1)
+                        logger.WriteLine("Duplicate Title Found -> " + titleString);
+                    
                     if (data != null)
                     {
                         found = true;
-
                         tag.Copyright = aaxInfo.format.tags.copyright;
                         tag.AlbumArtists = data.authors.Split(",");
                         tag.Title = data.title;
@@ -315,8 +334,28 @@ namespace Harmony
                         tag.Description = data.extended_product_description;
                         tag.Genres = data.genres.Split(",");
                         tag.AmazonId = data.asin;
-                        
                     }
+
+                    var metadata = new AbsMetadata();
+
+                    metadata.title = data?.title;
+                    metadata.subtitle = data?.subtitle;
+                    metadata.authors = data?.authors?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+                    metadata.narrators = data?.narrators?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+                    metadata.series = new List<string>() {data?.series_title + " #" + data?.series_sequence };
+                    metadata.genres = data?.genres?.Split(',').Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+                    metadata.publishedYear = data?.release_date.Year.ToString();
+                    metadata.publishedDate = data?.release_date.Date.ToString("yyyy-MM-dd");
+                    metadata.description = data?.extended_product_description;
+                    metadata.asin = data?.asin;
+
+                    if (metadata.series[0].Trim() == "#")
+                        metadata.series = new List<string>();
+                    
+                    JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
+                    string metadataString = JsonSerializer.Serialize(metadata, options);
+                    var metadataFile = Path.Combine(Path.GetDirectoryName(filePath) ?? string.Empty,"metadata.json");
+                    File.WriteAllText(metadataFile, metadataString);
                 }
                 
                 if (!found)
@@ -328,6 +367,18 @@ namespace Harmony
                         tag.Year = uint.Parse(aaxInfo.format.tags.date);
                     tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
                     tag.Copyright = aaxInfo?.format?.tags?.copyright;
+                    
+                    
+                    var metadata = new AbsMetadata();
+
+                    metadata.title = aaxInfo?.format?.tags?.title;
+                    metadata.authors = aaxInfo?.format?.tags?.artist.Split(",").ToList();
+                    
+                    JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
+                    string metadataString = JsonSerializer.Serialize(metadata, options);
+                    var metadataFile = Path.Combine(Path.GetDirectoryName(filePath),"metadata.json");
+                    File.WriteAllText(metadataFile, metadataString);
+                    
                 }
                 if (File.Exists(coverPath))
                 {
