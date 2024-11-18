@@ -309,7 +309,7 @@ namespace Harmony
                 bool found = false;
                 if (_library != null)
                 {
-                    _library = _library.Where(x => x.authors.Contains("Nathan Van Coops")).OrderBy(x => x.authors).ToList();
+                    _library = _library.OrderBy(x => x.authors).ToList();
                     var regex = new Regex("Part [0-9]");
                     var boxset = regex.Match(aaxInfo?.format.tags.title).Success;
                     var titleString = boxset ? Regex.Replace(aaxInfo?.format.tags.title, @"\bPart [1-9]\b", "").Trim(): aaxInfo?.format.tags.title;
