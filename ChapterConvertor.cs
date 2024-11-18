@@ -13,7 +13,7 @@ public class ChapterConverter
         sb.AppendLine(";FFMETADATA1");
 
         var inputDirectory = Path.GetDirectoryName(filePath);
-        var audibleChapterFile = Path.Combine(inputDirectory, Path.GetFileName(filePath).Split("-LC")[0] + "-chapters.json");
+        var audibleChapterFile = Path.Combine(inputDirectory, Path.GetFileName(filePath).Split("-AAX")[0] + "-chapters.json");
 
         if (File.Exists(audibleChapterFile))
         {

@@ -304,7 +304,7 @@ namespace Harmony
             using (var file = TagLib.File.Create(filePath))
             {
                 //var tag = file.GetTag(TagTypes.Apple);
-                var tag = file.GetTag(TagTypes.Id3v2);
+                var tag = file.GetTag(TagTypes.Apple);
                 
                 bool found = false;
                 if (_library != null)
