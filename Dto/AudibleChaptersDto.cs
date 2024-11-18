@@ -70,7 +70,7 @@ namespace Harmony.Dto;
         public string content_format { get; set; }
 
         [JsonProperty("content_size_in_bytes")]
-        public int? content_size_in_bytes { get; set; }
+        public long? content_size_in_bytes { get; set; }
 
         [JsonProperty("file_version")]
         public string file_version { get; set; }
