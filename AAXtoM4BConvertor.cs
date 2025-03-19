@@ -270,6 +270,22 @@ namespace Harmony
             var logger = new Logger(_quietMode);
             logger.Write("Extracting cover art... ");
 
+            var directory = Path.GetDirectoryName(filePath);
+            var filename = Path.GetFileName(filePath);
+            string baseName = filename.Split("-AAX")[0];
+            string pattern = $@"^{Regex.Escape(baseName)}_\(\d+\)\.jpg$";
+            var matchingFile = Directory.GetFiles(directory, "*.jpg")
+                .Where(f => Regex.IsMatch(Path.GetFileName(f), pattern, RegexOptions.IgnoreCase))
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.Length)
+                .Select(f => f.Name).FirstOrDefault();
+
+            if (matchingFile != null)
+            {
+                logger.WriteLine("Done");
+                return Path.Combine(directory, matchingFile);
+            }
+            
             var coverFile = Path.Combine(outputDirectory, "Cover.jpg");
             var conversion = FFmpeg.Conversions.New()
                 .AddParameter($"-activation_bytes {_activationBytes}")
