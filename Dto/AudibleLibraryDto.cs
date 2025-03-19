@@ -13,9 +13,9 @@ public class AudibleLibraryDto
     public string? genres { get; set; }
     public int runtime_length_min { get; set; }
     public bool is_finished { get; set; }
-    public double percent_complete { get; set; }
-    public double rating { get; set; }
-    public int num_ratings { get; set; }
+    public double? percent_complete { get; set; }
+    public double? rating { get; set; }
+    public int? num_ratings { get; set; }
     public DateTime date_added { get; set; }
     public DateTime release_date { get; set; }
     public string? cover_url { get; set; }
