@@ -1,5 +1,9 @@
 namespace Harmony.Dto;
 
+/// <summary>
+/// Represents an entry from the Audible library TSV export.
+/// Property names match TSV column headers for CsvHelper mapping.
+/// </summary>
 public class AudibleLibraryDto
 {
     public string? asin { get; set; }

@@ -1,0 +1,177 @@
+# AGENTS.md - Harmony 2.0
+
+Guidelines for AI coding agents working in this repository.
+
+## Project Overview
+
+Harmony is a .NET 8.0 console application that converts Audible AAX/AAXC audiobook files to M4B format. It uses FFmpeg for audio processing and TagLibSharp for metadata management.
+
+## Build Commands
+
+```bash
+# Build the project
+dotnet build
+
+# Build in Release mode
+dotnet build -c Release
+
+# Run the application
+dotnet run -- [options]
+
+# Publish as single-file executable (see Program.cs for platform targets)
+dotnet publish -r win-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
+dotnet publish -r osx-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
+dotnet publish -r linux-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
+dotnet publish -r linux-arm64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
+```
+
+## Lint/Format Commands
+
+```bash
+# Format code (whitespace, style, implicit usings)
+dotnet format
+
+# Format with verification only (CI)
+dotnet format --verify-no-changes
+
+# Build with warnings as errors
+dotnet build /warnaserror
+```
+
+## Test Commands
+
+```bash
+# No test project exists currently. If tests are added:
+dotnet test
+
+# Run specific test class
+dotnet test --filter "FullyQualifiedName~ClassName"
+
+# Run specific test method
+dotnet test --filter "FullyQualifiedName~ClassName.MethodName"
+```
+
+## Dependencies
+
+- **CommandLineParser** (2.9.1) - CLI argument parsing
+- **CsvHelper** (33.0.1) - TSV library file parsing
+- **Instances** (3.0.0) - Process invocation
+- **Newtonsoft.Json** (13.0.3) - JSON serialization (legacy DTOs)
+- **TagLibSharp** (2.3.0) - Audio metadata handling
+- **Xabe.FFmpeg.Downloader** (5.2.6) - FFmpeg wrapper
+
+## Code Style Guidelines
+
+### Imports and Usings
+
+- Implicit usings are enabled (`<ImplicitUsings>enable</ImplicitUsings>`)
+- Place `using` statements at the top of the file, alphabetically sorted
+- Group imports: System namespaces first, then third-party, then project namespaces
+- Use fully qualified names for disambiguation (e.g., `System.IO.File` vs `TagLib.File`)
+
+```csharp
+using System.Diagnostics;
+using System.Text.Json;
+using Harmony.Dto;
+using TagLib;
+using File = System.IO.File;
+```
+
+### Naming Conventions
+
+| Element | Convention | Example |
+|---------|------------|---------|
+| Classes | PascalCase | `AaxToM4BConvertor` |
+| Methods | PascalCase | `ProcessAaxFile` |
+| Properties | PascalCase | `public string Title { get; set; }` |
+| Private fields | Underscore + camelCase | `_activationBytes`, `_inputFolder` |
+| Local variables | camelCase | `outputDirectory`, `logger` |
+| Constants | PascalCase | (no constants currently defined) |
+| Parameters | camelCase | `quietMode`, `inputFolder` |
+
+### Type System
+
+- Nullable reference types are enabled (`<Nullable>enable</Nullable>`)
+- Use `?` for nullable reference types: `string?`, `List<T>?`
+- Use `int`, `bool`, etc. for non-nullable value types
+- Prefer `var` for local variable declarations when type is obvious
+- Explicit types when clarity improves readability
+
+### Formatting
+
+- Indent with spaces (4 spaces, typical Visual Studio default)
+- Opening braces on same line for control structures
+- Blank line between method definitions
+- Single statement per line
+
+### Class Structure
+
+- Internal classes preferred unless public access is required
+- Mark classes as `internal` by default
+- One class per file (DTOs in the `Dto/` folder may have multiple classes)
+- Constructor parameters should initialize private readonly fields
+
+```csharp
+internal class AaxToM4BConvertor
+{
+    private readonly string _activationBytes;
+    private readonly int _bitrate;
+
+    public AaxToM4BConvertor(string activationBytes, int bitrate)
+    {
+        _activationBytes = activationBytes;
+        _bitrate = bitrate;
+    }
+}
+```
+
+### Error Handling
+
+- Throw exceptions for unrecoverable errors with descriptive messages
+- Catch exceptions at appropriate boundaries (e.g., entry point in Program.cs)
+- Log errors with context before throwing when appropriate
+- Prefer early returns for validation failures to avoid deep nesting
+
+```csharp
+if (!Directory.Exists(_inputFolder))
+    throw new Exception("Input folder does not exist: " + _inputFolder);
+```
+
+### Null Handling
+
+- Check for null before accessing nullable reference types
+- Use null-conditional operators (`?.`) for safe navigation
+- Use null-coalescing operator (`??`) for default values
+- Never suppress null warnings; fix the underlying issue
+
+### Async/Await
+
+- Use `async`/`await` for I/O-bound operations
+- Prefer `Task.Wait()` only when wrapping legacy async code (as seen in FFmpeg calls)
+- Avoid `async void` except for event handlers
+
+### Comments
+
+- Code should be self-documenting; prefer clear naming over comments
+- Use `// ReSharper disable` comments to suppress specific warnings when justified
+- Avoid commented-out code in production; delete it
+
+### JSON Handling
+
+- Two JSON libraries are used:
+  - `System.Text.Json` for new code (preferred)
+  - `Newtonsoft.Json` for legacy DTOs with `[JsonProperty]` attributes
+- Use `PropertyNameCaseInsensitive = true` when deserializing
+
+```csharp
+JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions
+{
+    PropertyNameCaseInsensitive = true
+});
+```
+
+## External Dependencies
+
+- **FFmpeg/FFprobe** must be available in PATH or downloaded via `-f` flag
+- Application downloads FFmpeg automatically if missing
+- Requires .NET 8.0 SDK for development

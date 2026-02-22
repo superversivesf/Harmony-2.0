@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Reflection;
 using CommandLine;
 using CsvHelper;
@@ -12,6 +12,11 @@ namespace Harmony;
 
 internal static class Program
 {
+    /// <summary>
+    /// Delay in milliseconds between spinner animation updates.
+    /// </summary>
+    public const int SpinnerDelayMs = 50;
+
     private static void Main(string[] args)
     {
         // dotnet publish -r win-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
@@ -27,95 +32,101 @@ internal static class Program
         }
         catch (Exception e)
         {
-            Console.WriteLine("Processing failure -> " + e.Message + ":" + e.InnerException?.Message);
+            Console.WriteLine($"Processing failure -> {e.Message}:{e.InnerException?.Message}");
         }
     }
 
     private static void HandleParseError(IEnumerable<Error> errors)
     {
+        foreach (var error in errors)
+        {
+            Console.Error.WriteLine($"CLI Error: {error.Tag}");
+        }
+        Environment.Exit(1);
+    }
+
+    /// <summary>
+    /// Fetches the latest FFmpeg version asynchronously with a spinner animation.
+    /// </summary>
+    /// <param name="logger">Logger instance for output.</param>
+    public static async Task FetchFFmpegAsync(Logger logger)
+    {
+        logger.Write("Fetching Latest FFMpeg ...  ");
+
+        var fetchTask = FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
+        while (!fetchTask.IsCompleted)
+        {
+            logger.AdvanceSpinner();
+            await Task.Delay(SpinnerDelayMs);
+        }
+
+        logger.WriteLine("\bDone");
     }
 
     private static void RunOptions(Options options)
     {
-        var clobber = options.clobber;
-        var activationBytes = options.activationBytes;
-        var bitrate = options.bitrate;
-        var inputFolder = options.inputFolder;
-        var outputFolder = options.outputFolder;
-        var quietMode = options.quietMode;
+        var clobber = options.Clobber;
+        var activationBytes = options.ActivationBytes;
+        var bitrate = options.Bitrate;
+        var inputFolder = options.InputFolder;
+        var outputFolder = options.OutputFolder;
+        var quietMode = options.QuietMode;
         var logger = new Logger(quietMode);
-        var loopMode = options.loopMode;
+        var loopMode = options.LoopMode;
 
         logger.WriteLine(
-            $"Harmony {Assembly.GetExecutingAssembly().GetName().Version!.ToString()}\nCopyright(C) 2023 Harmony\n");
+            $"Harmony {Assembly.GetExecutingAssembly().GetName().Version}\nCopyright(C) 2023 Harmony\n");
 
-        if (options.fetchFFMpeg)
+        if (options.FetchFFMpeg)
         {
-            logger.Write("Fetching Latest FFMpeg ...  ");
-
-            var fetchTask = FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
-            while (!fetchTask.IsCompleted)
-            {
-                logger.AdvanceSpinner();
-                Thread.Sleep(50);
-            }
-
-            logger.WriteLine("\bDone");
-
+            FetchFFmpegAsync(logger).GetAwaiter().GetResult();
             return;
         }
 
         do
         {
-            logger.Write("Fetching Latest FFMpeg ...  ");
-            var fetchTask = FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
-            
-            while (!fetchTask.IsCompleted)
+            FetchFFmpegAsync(logger).GetAwaiter().GetResult();
+
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
-                logger.AdvanceSpinner();
-                Thread.Sleep(50);
-            }
-
-            logger.WriteLine("\bDone");
-
-            var config = new CsvConfiguration(CultureInfo.InvariantCulture);
-            config.Delimiter = "\t";
-            var libraryFile = Path.Combine(options.inputFolder, "library.tsv");
-            List<AudibleLibraryDto> library = null;
+                Delimiter = "\t"
+            };
+            var libraryFile = Path.Combine(inputFolder!, "library.tsv");
+            List<AudibleLibraryDto>? library = null;
             if (File.Exists(libraryFile))
             {
                 using (var reader = new StreamReader(libraryFile))
                 using (var csv = new CsvReader(reader, config))
-                { 
+                {
                     library = csv.GetRecords<AudibleLibraryDto>().ToList();
                 }
             }
-            
-                var aaxConverter = new AaxToM4BConvertor(
-                    activationBytes!,
-                    bitrate,
-                    quietMode,
-                    inputFolder!,
-                    outputFolder!,
-                    clobber,
-                    library
-                );
-                aaxConverter.Execute();            
-                
-                var aaxcConvertor = new AaxcToM4BConvertor(
-                    bitrate,
-                    quietMode,
-                    inputFolder!,
-                    outputFolder!,
-                    clobber,
-                    library
-                );
-                aaxcConvertor.Execute();            
+
+            var aaxConverter = new AaxToM4BConvertor(
+                activationBytes!,
+                bitrate,
+                quietMode,
+                inputFolder!,
+                outputFolder!,
+                clobber,
+                library
+            );
+            aaxConverter.Execute();
+
+            var aaxcConvertor = new AaxcToM4BConvertor(
+                bitrate,
+                quietMode,
+                inputFolder!,
+                outputFolder!,
+                clobber,
+                library
+            );
+            aaxcConvertor.Execute();
 
             if (loopMode)
             {
                 logger.WriteLine("Run complete, sleeping for 5 minutes");
-                Thread.Sleep(600);
+                Thread.Sleep(TimeSpan.FromMinutes(5));
             }
 
             // ReSharper disable once LoopVariableIsNeverChangedInsideLoop
@@ -128,35 +139,34 @@ internal static class Program
     {
         [Option('c', "Clobber", Required = false,
             HelpText = "Delete or skip existing output files?", Default = false)]
-        public bool clobber { get; set; }
-        
+        public bool Clobber { get; set; }
+
         [Option('b', "Bitrate", Required = false,
             HelpText = "The bitrate in kilobits for the output files. Defaults to 64k, specified as 64", Default = 64)]
-        public int bitrate { get; set; }
+        public int Bitrate { get; set; }
 
         [Option('i', "InputFolder", Required = false, HelpText = "The folder that contains your AAX files")]
-        public string? inputFolder { get; set; } = null;
+        public string? InputFolder { get; set; }
 
-        [Option('o', "OutputFolder", Required = false, HelpText = "The folder that will contain your MP3 files")]
-        public string? outputFolder { get; set; } = null;
-        
+        [Option('o', "OutputFolder", Required = false, HelpText = "The folder that will contain your M4B files")]
+        public string? OutputFolder { get; set; }
+
         [Option('a', "ActivationBytes", Required = false,
             HelpText =
                 "Activation bytes for decoding your AAX File. See https://github.com/inAudible-NG/tables for details of how to obtain")]
-        public string? activationBytes { get; set; } = null;
+        public string? ActivationBytes { get; set; }
 
         [Option('f', "FetchFFMpeg", Required = false,
             HelpText = "Just download versions of ffmpeg and ffprobe locally and exit")]
-        // ReSharper disable once InconsistentNaming
-        public bool fetchFFMpeg { get; set; }
+        public bool FetchFFMpeg { get; set; }
 
         [Option('q', "QuietMode", Required = false, HelpText = "Disable all output", Default = false)]
-        public bool quietMode { get; set; }
+        public bool QuietMode { get; set; }
 
         [Option('l', "LoopMode", Required = false,
             HelpText =
                 "Have the program run to completion then check and run again with a 5 minute sleep between each run",
             Default = false)]
-        public bool loopMode { get; set; }
+        public bool LoopMode { get; set; }
     }
 }

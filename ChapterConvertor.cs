@@ -4,16 +4,15 @@ using Harmony.Dto;
 
 namespace Harmony;
 
-
-public class ChapterConverter
+internal class ChapterConverter
 {
     public static void CreateChapterFile(string filePath, AaxInfoDto aaxinfo, string outputPath)
-    { 
+    {
         var sb = new StringBuilder();
         sb.AppendLine(";FFMETADATA1");
 
         var inputDirectory = Path.GetDirectoryName(filePath);
-        var audibleChapterFile = Path.Combine(inputDirectory, Path.GetFileName(filePath).Split("-AAX")[0] + "-chapters.json");
+        var audibleChapterFile = Path.Combine(inputDirectory ?? string.Empty, Path.GetFileName(filePath)?.Split("-AAX")[0] + "-chapters.json");
 
         if (File.Exists(audibleChapterFile))
         {
@@ -24,26 +23,23 @@ public class ChapterConverter
             });
 
             var chapterList =
-                AudibleChaptersDto.FlattenChapters(audibleChpaters.content_metadata.chapter_info.chapters);
+                AudibleChaptersDto.FlattenChapters(audibleChpaters?.content_metadata?.chapter_info?.chapters);
 
-            foreach (var c in chapterList)
+            foreach (var c in chapterList ?? [])
             {
-                
-                int startTime = c.start_offset_ms.Value;
-                int duration = c.length_ms.Value;
+                int startTime = c.start_offset_ms ?? 0;
+                int duration = c.length_ms ?? 0;
                 double endTime = startTime + duration - 1;
 
                 sb.AppendLine("[CHAPTER]");
                 sb.AppendLine("TIMEBASE=1/1000");
-                sb.AppendLine("START=" + startTime.ToString("F0"));
-                sb.AppendLine("END=" + endTime.ToString("F0"));
-                sb.AppendLine("title=" + c.title);
-
+                sb.AppendLine($"START={startTime:F0}");
+                sb.AppendLine($"END={endTime:F0}");
+                sb.AppendLine($"title={c.title}");
             }
-            
         }
-        else
-        { 
+        else if (aaxinfo.chapters?.Count > 0)
+        {
             for (int i = 0; i < aaxinfo.chapters.Count; i++)
             {
                 var chapter = aaxinfo.chapters[i];
@@ -52,9 +48,9 @@ public class ChapterConverter
 
                 sb.AppendLine("[CHAPTER]");
                 sb.AppendLine("TIMEBASE=1/1000");
-                sb.AppendLine("START=" + startTime.ToString("F0"));
-                sb.AppendLine("END=" + endTime.ToString("F0"));
-                sb.AppendLine("title=Chapter " + (i + 1));
+                sb.AppendLine($"START={startTime:F0}");
+                sb.AppendLine($"END={endTime:F0}");
+                sb.AppendLine($"title=Chapter {i + 1}");
             }
         }
 
