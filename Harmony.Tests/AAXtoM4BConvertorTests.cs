@@ -8,14 +8,15 @@ public class AAXtoM4BConvertorTests
     #region Constants Tests
 
     [Fact]
-    public void MaxAuthorCountForIndividualDisplay_ShouldBeFour()
+    public async Task MaxAuthorCountForIndividualDisplay_ShouldBeFour()
     {
         // Assert
         AaxToM4BConvertor.MaxAuthorCountForIndividualDisplay.Should().Be(4);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void MaxAuthorCountForIndividualDisplay_ShouldBePublicConstant()
+    public async Task MaxAuthorCountForIndividualDisplay_ShouldBePublicConstant()
     {
         // Arrange
         var field = typeof(AaxToM4BConvertor).GetField(
@@ -25,6 +26,7 @@ public class AAXtoM4BConvertorTests
         // Assert
         field.Should().NotBeNull("the constant should be public");
         field!.IsLiteral.Should().BeTrue("it should be a compile-time constant");
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -35,7 +37,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("Author1, Author2, Author3, Author4", "Author1, Author2, Author3, Author4")]
     [InlineData("Author1, Author2, Author3", "Author1, Author2, Author3")]
     [InlineData("Single Author", "Single Author")]
-    public void CleanAuthor_ShouldNotReturnVariousForEqualOrFewerAuthorsThanThreshold(string input, string expected)
+    public async Task CleanAuthor_ShouldNotReturnVariousForEqualOrFewerAuthorsThanThreshold(string input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -47,13 +49,14 @@ public class AAXtoM4BConvertorTests
         // Assert
         result.Should().Be(expected);
         authorCount.Should().BeLessThanOrEqualTo(AaxToM4BConvertor.MaxAuthorCountForIndividualDisplay);
+        await Task.CompletedTask;
     }
 
     [Theory]
     [InlineData("A, B, C, D, E")] // 5 authors
     [InlineData("A, B, C, D, E, F")] // 6 authors
     [InlineData("1, 2, 3, 4, 5, 6, 7, 8, 9, 10")] // 10 authors
-    public void CleanAuthor_ShouldReturnVariousWhenAuthorCountExceedsMaxAuthorCount(string input)
+    public async Task CleanAuthor_ShouldReturnVariousWhenAuthorCountExceedsMaxAuthorCount(string input)
     {
         // Arrange
         var converter = CreateConverter();
@@ -65,6 +68,7 @@ public class AAXtoM4BConvertorTests
         // Assert
         result.Should().Be("Various");
         authorCount.Should().BeGreaterThan(AaxToM4BConvertor.MaxAuthorCountForIndividualDisplay);
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -79,7 +83,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("  Test Book  ", "Test Book")]
     [InlineData(null, null)]
     [InlineData("", "")]
-    public void CleanTitle_ShouldHandleVariousInputs(string? input, string? expected)
+    public async Task CleanTitle_ShouldHandleVariousInputs(string? input, string? expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -89,6 +93,7 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -100,7 +105,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("John Smith Jr., Jane Doe", "John Smith Jr, Jane Doe")]
     [InlineData(null, "Unknown")]
     [InlineData("", "Unknown")]
-    public void CleanAuthor_ShouldHandleVariousInputs(string? input, string expected)
+    public async Task CleanAuthor_ShouldHandleVariousInputs(string? input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -110,6 +115,7 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -117,7 +123,7 @@ public class AAXtoM4BConvertorTests
     #region CheckFolders Tests
 
     [Fact]
-    public void CheckFolders_ShouldThrowForNonExistentInputFolder()
+    public async Task CheckFolders_ShouldThrowForNonExistentInputFolder()
     {
         // Arrange
         var converter = CreateConverter(
@@ -130,10 +136,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         act.Should().Throw<Exception>()
             .WithMessage("*Input folder does not exist*");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CheckFolders_ShouldThrowForNonExistentOutputFolder()
+    public async Task CheckFolders_ShouldThrowForNonExistentOutputFolder()
     {
         // Arrange
         var inputFolder = Directory.CreateTempSubdirectory().FullName;
@@ -154,10 +161,11 @@ public class AAXtoM4BConvertorTests
         {
             Directory.Delete(inputFolder);
         }
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CheckFolders_ShouldNotThrowForExistingFolders()
+    public async Task CheckFolders_ShouldNotThrowForExistingFolders()
     {
         // Arrange
         var inputFolder = Directory.CreateTempSubdirectory().FullName;
@@ -179,6 +187,7 @@ public class AAXtoM4BConvertorTests
             Directory.Delete(inputFolder);
             Directory.Delete(outputFolder);
         }
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -186,7 +195,7 @@ public class AAXtoM4BConvertorTests
     #region Null Handling Tests for Split Operations
 
     [Fact]
-    public void NullSafeSplit_WithNullAuthors_ShouldReturnEmptyArray()
+    public async Task NullSafeSplit_WithNullAuthors_ShouldReturnEmptyArray()
     {
         // Test the pattern used for null-safe splitting: authors?.Split(",") ?? Array.Empty<string>()
         string? authors = null;
@@ -195,10 +204,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         result.Should().NotBeNull();
         result.Should().BeEmpty("null input returns empty array via null-coalescing");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void NullSafeSplit_WithEmptyString_ShouldReturnSingleEmptyElement()
+    public async Task NullSafeSplit_WithEmptyString_ShouldReturnSingleEmptyElement()
     {
         // Important: Split on empty string returns [""], not empty array
         // This is the expected behavior - the fix prevents NullReferenceException for null, not filtering
@@ -209,13 +219,14 @@ public class AAXtoM4BConvertorTests
         result.Should().NotBeNull();
         result.Should().HaveCount(1);
         result[0].Should().BeEmpty();
+        await Task.CompletedTask;
     }
 
     [Theory]
     [InlineData("Author1", new[] { "Author1" })]
     [InlineData("Author1,Author2", new[] { "Author1", "Author2" })]
     [InlineData("Author1, Author2, Author3", new[] { "Author1", " Author2", " Author3" })]
-    public void NullSafeSplit_WithValidAuthors_ShouldSplitCorrectly(string authors, string[] expected)
+    public async Task NullSafeSplit_WithValidAuthors_ShouldSplitCorrectly(string authors, string[] expected)
     {
         // Test the pattern used for null-safe splitting
         string[] result = authors?.Split(",") ?? Array.Empty<string>();
@@ -223,10 +234,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         result.Should().NotBeNull();
         result.Should().BeEquivalentTo(expected);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void NullSafeSplit_WithNullGenres_ShouldReturnEmptyArray()
+    public async Task NullSafeSplit_WithNullGenres_ShouldReturnEmptyArray()
     {
         // Test the pattern used in the actual code: data.genres?.Split(",") ?? Array.Empty<string>()
         string? genres = null;
@@ -234,10 +246,11 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().BeEmpty();
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void NullSafeSplit_WithNullNarrators_ShouldReturnEmptyArray()
+    public async Task NullSafeSplit_WithNullNarrators_ShouldReturnEmptyArray()
     {
         // Test the pattern used in the actual code: data.narrators?.Split(",") ?? Array.Empty<string>()
         string? narrators = null;
@@ -245,6 +258,7 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().BeEmpty();
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -252,7 +266,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("", null)]
     [InlineData("   ", null)]
     [InlineData("   ", "")]
-    public void SeriesString_WithNullOrWhitespaceTitle_ShouldReturnEmptyList(string? seriesTitle, string? seriesSequence)
+    public async Task SeriesString_WithNullOrWhitespaceTitle_ShouldReturnEmptyList(string? seriesTitle, string? seriesSequence)
     {
         // Test the series string pattern from AddMetadataToM4A
         var series = !string.IsNullOrWhiteSpace(seriesTitle)
@@ -261,10 +275,11 @@ public class AAXtoM4BConvertorTests
 
         // Assert - null or whitespace series_title should produce empty list
         series.Should().BeEmpty("series_title is null or whitespace");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void SeriesString_WithValidTitleAndSequence_ShouldFormatCorrectly()
+    public async Task SeriesString_WithValidTitleAndSequence_ShouldFormatCorrectly()
     {
         // Arrange
         string? seriesTitle = "The Great Series";
@@ -278,10 +293,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         series.Should().ContainSingle()
             .Which.Should().Be("The Great Series #5");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void SeriesString_WithValidTitleButNullSequence_ShouldFormatGracefully()
+    public async Task SeriesString_WithValidTitleButNullSequence_ShouldFormatGracefully()
     {
         // Arrange
         string? seriesTitle = "The Great Series";
@@ -295,10 +311,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         series.Should().ContainSingle()
             .Which.Should().Be("The Great Series #");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void SeriesString_WithValidTitleButEmptySequence_ShouldFormatGracefully()
+    public async Task SeriesString_WithValidTitleButEmptySequence_ShouldFormatGracefully()
     {
         // Arrange
         string? seriesTitle = "The Great Series";
@@ -312,10 +329,11 @@ public class AAXtoM4BConvertorTests
         // Assert
         series.Should().ContainSingle()
             .Which.Should().Be("The Great Series #");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void SeriesString_PreviouslyWouldCreateHashSpace_WhenTitleWasNull()
+    public async Task SeriesString_PreviouslyWouldCreateHashSpace_WhenTitleWasNull()
     {
         // This test documents the OLD bug behavior vs the fix
         // OLD CODE: metadata.series = new List<string>() {data?.series_title + " #" + data?.series_sequence };
@@ -334,6 +352,7 @@ public class AAXtoM4BConvertorTests
         // Assert
         oldBuggyResult.Should().Be(" #5", "old code would create this malformed string");
         newCorrectResult.Should().BeEmpty("new code correctly handles null series_title");
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -348,7 +367,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("Book: Part 1", "bookpart1")]
     [InlineData("ALL UPPERCASE", "alluppercase")]
     [InlineData("MixedCase Title", "mixedcasetitle")]
-    public void ProcessTitleForComparison_ShouldConvertToLowercaseAndStripNonAlphanumeric(string input, string expected)
+    public async Task ProcessTitleForComparison_ShouldConvertToLowercaseAndStripNonAlphanumeric(string input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -358,6 +377,7 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -365,7 +385,7 @@ public class AAXtoM4BConvertorTests
     [InlineData("Book@#$%^&*()Title", "booktitle")]
     [InlineData("123 Numbers 456", "123numbers456")]
     [InlineData("!@#$%^&*()", "")]
-    public void ProcessTitleForComparison_ShouldStripAllSpecialCharacters(string input, string expected)
+    public async Task ProcessTitleForComparison_ShouldStripAllSpecialCharacters(string input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -375,10 +395,11 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void ProcessTitleForComparison_ShouldHandleUnicodeCharacters()
+    public async Task ProcessTitleForComparison_ShouldHandleUnicodeCharacters()
     {
         // Arrange
         var converter = CreateConverter();
@@ -390,10 +411,11 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be("cafmenu"); // é stripped, Chinese characters stripped
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void ProcessTitleForComparison_ShouldHandleEmptyString()
+    public async Task ProcessTitleForComparison_ShouldHandleEmptyString()
     {
         // Arrange
         var converter = CreateConverter();
@@ -403,13 +425,14 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().BeEmpty();
+        await Task.CompletedTask;
     }
 
     [Theory]
     [InlineData("   ", "")]
     [InlineData("\t\n", "")]
     [InlineData(" Title ", "title")]
-    public void ProcessTitleForComparison_ShouldHandleWhitespace(string input, string expected)
+    public async Task ProcessTitleForComparison_ShouldHandleWhitespace(string input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -419,6 +442,7 @@ public class AAXtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     #endregion

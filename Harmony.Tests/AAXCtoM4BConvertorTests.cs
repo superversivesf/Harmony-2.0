@@ -13,7 +13,7 @@ public class AAXCtoM4BConvertorTests
     /// the code handles it gracefully (empty string is not null, so it would enter the branch).
     /// </summary>
     [Fact]
-    public void PathGetDirectoryName_ShouldReturnEmptyForFileNameOnly()
+    public async Task PathGetDirectoryName_ShouldReturnEmptyForFileNameOnly()
     {
         // Arrange
         var fileNameOnly = "filenameOnly.aaxc";
@@ -25,6 +25,7 @@ public class AAXCtoM4BConvertorTests
         // The fix in GenerateCover checks for "is not null", which handles this correctly
         directory.Should().NotBeNull();
         directory.Should().BeEmpty("Path.GetFileName returns empty for filename-only paths");
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -35,7 +36,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("  Test Book  ", "Test Book")]
     [InlineData(null, null)]
     [InlineData("", "")]
-    public void CleanTitle_ShouldHandleVariousInputs(string? input, string? expected)
+    public async Task CleanTitle_ShouldHandleVariousInputs(string? input, string? expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -45,6 +46,7 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -53,7 +55,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData(null, "Unknown")]
     [InlineData("", "Unknown")]
     [InlineData("A, B, C, D, E", "Various")] // More than 4 authors
-    public void CleanAuthor_ShouldHandleVariousInputs(string? input, string expected)
+    public async Task CleanAuthor_ShouldHandleVariousInputs(string? input, string expected)
     {
         // Arrange
         var converter = CreateConverter();
@@ -63,10 +65,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expected);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CleanAuthor_ShouldReturnUnknownForNull()
+    public async Task CleanAuthor_ShouldReturnUnknownForNull()
     {
         // Arrange
         var converter = CreateConverter();
@@ -76,10 +79,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be("Unknown");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CleanAuthor_ShouldReturnUnknownForEmpty()
+    public async Task CleanAuthor_ShouldReturnUnknownForEmpty()
     {
         // Arrange
         var converter = CreateConverter();
@@ -89,10 +93,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be("Unknown");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CleanAuthor_ShouldReturnVariousForMoreThanFourAuthors()
+    public async Task CleanAuthor_ShouldReturnVariousForMoreThanFourAuthors()
     {
         // Arrange
         var converter = CreateConverter();
@@ -103,10 +108,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be("Various");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CheckFolders_ShouldThrowForNonExistentInputFolder()
+    public async Task CheckFolders_ShouldThrowForNonExistentInputFolder()
     {
         // Arrange
         var converter = CreateConverter(
@@ -119,10 +125,11 @@ public class AAXCtoM4BConvertorTests
         // Assert
         act.Should().Throw<Exception>()
             .WithMessage("*Input folder does not exist*");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CheckFolders_ShouldThrowForNonExistentOutputFolder()
+    public async Task CheckFolders_ShouldThrowForNonExistentOutputFolder()
     {
         // Arrange
         var inputFolder = Directory.CreateTempSubdirectory().FullName;
@@ -143,10 +150,11 @@ public class AAXCtoM4BConvertorTests
         {
             Directory.Delete(inputFolder);
         }
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void CheckFolders_ShouldNotThrowForExistingFolders()
+    public async Task CheckFolders_ShouldNotThrowForExistingFolders()
     {
         // Arrange
         var inputFolder = Directory.CreateTempSubdirectory().FullName;
@@ -168,6 +176,7 @@ public class AAXCtoM4BConvertorTests
             Directory.Delete(inputFolder);
             Directory.Delete(outputFolder);
         }
+        await Task.CompletedTask;
     }
 
     #region Case-Insensitive Title Matching Tests
@@ -180,7 +189,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("Harry Potter", "harry potter", true)]
     [InlineData("1984", "1984", true)]
     [InlineData("Book Title", "book title", true)]
-    public void StringEquals_WithOrdinalIgnoreCase_ShouldMatchCaseVariations(string title1, string title2, bool expectedMatch)
+    public async Task StringEquals_WithOrdinalIgnoreCase_ShouldMatchCaseVariations(string title1, string title2, bool expectedMatch)
     {
         // This tests the pattern used in AAXCtoM4BConvertor line 350:
         // var data = _library.FirstOrDefault(x => string.Equals(titleString, x.title, StringComparison.OrdinalIgnoreCase));
@@ -190,10 +199,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expectedMatch);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void StringEquals_OrdinalIgnoreCase_ShouldHandleNullFirstParameter()
+    public async Task StringEquals_OrdinalIgnoreCase_ShouldHandleNullFirstParameter()
     {
         // Arrange
         string? nullTitle = null;
@@ -208,10 +218,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeFalse("null compared to non-null returns false");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void StringEquals_OrdinalIgnoreCase_ShouldHandleNullSecondParameter()
+    public async Task StringEquals_OrdinalIgnoreCase_ShouldHandleNullSecondParameter()
     {
         // Arrange
         string validTitle = "Some Title";
@@ -222,10 +233,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeFalse("non-null compared to null returns false");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void StringEquals_OrdinalIgnoreCase_BothNull()
+    public async Task StringEquals_OrdinalIgnoreCase_BothNull()
     {
         // Arrange
         string? nullTitle1 = null;
@@ -236,10 +248,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeTrue("two nulls are considered equal");
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void StringEquals_OrdinalIgnoreCase_ShouldNotMatchDifferentTitles()
+    public async Task StringEquals_OrdinalIgnoreCase_ShouldNotMatchDifferentTitles()
     {
         // Arrange
         string title1 = "The Great Gatsby";
@@ -250,6 +263,7 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeFalse("titles with extra content are not equal");
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -266,7 +280,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("The Great Book Part1", false)] // No space
     [InlineData("The Great Book", false)]
     [InlineData("Part 1: The Beginning", true)]
-    public void BoxsetRegex_ShouldMatchPartPattern(string title, bool expectedMatch)
+    public async Task BoxsetRegex_ShouldMatchPartPattern(string title, bool expectedMatch)
     {
         // This tests the regex pattern used in AAXCtoM4BConvertor line 347:
         // var regex = new Regex("Part [0-9]");
@@ -277,6 +291,7 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().Be(expectedMatch);
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -285,7 +300,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("Book Part 9", "Book")] // Part with single digit removed
     [InlineData("Book Part 10 Title", "Book Part 10 Title")] // Double digit not matched, not removed
     [InlineData("Book Title", "Book Title")] // No pattern, unchanged
-    public void BoxsetTitleCleanup_ShouldRemovePartPattern(string title, string expectedTitle)
+    public async Task BoxsetTitleCleanup_ShouldRemovePartPattern(string title, string expectedTitle)
     {
         // This tests the pattern used in AAXCtoM4BConvertor line 349:
         // var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
@@ -303,6 +318,7 @@ public class AAXCtoM4BConvertorTests
         {
             titleString.Should().Be(expectedTitle);
         }
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -316,7 +332,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("Author1,Author2", new[] { "Author1", "Author2" })]
     [InlineData("Author1, Author2, Author3", new[] { "Author1", "Author2", "Author3" })]
     [InlineData("  Author1  ,  Author2  ", new[] { "Author1", "Author2" })]
-    public void MetadataSplitPattern_ShouldHandleAuthorsCorrectly(string? authors, string[] expected)
+    public async Task MetadataSplitPattern_ShouldHandleAuthorsCorrectly(string? authors, string[] expected)
     {
         // This tests the pattern from AAXCtoM4BConvertor line 371:
         // authors = data.authors?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList()
@@ -325,6 +341,7 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeEquivalentTo(expected);
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -333,7 +350,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("Narrator1", new[] { "Narrator1" })]
     [InlineData("Narrator1,Narrator2", new[] { "Narrator1", "Narrator2" })]
     [InlineData("  Narrator1  ,  Narrator2  ", new[] { "Narrator1", "Narrator2" })]
-    public void MetadataSplitPattern_ShouldHandleNarratorsCorrectly(string? narrators, string[] expected)
+    public async Task MetadataSplitPattern_ShouldHandleNarratorsCorrectly(string? narrators, string[] expected)
     {
         // This tests the pattern from AAXCtoM4BConvertor line 372:
         // narrators = data.narrators?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList()
@@ -342,6 +359,7 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeEquivalentTo(expected);
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -350,7 +368,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("Fiction", new[] { "Fiction" })]
     [InlineData("Fiction,Fantasy", new[] { "Fiction", "Fantasy" })]
     [InlineData("Fiction, Fantasy, Sci-Fi", new[] { "Fiction", "Fantasy", "Sci-Fi" })]
-    public void MetadataSplitPattern_ShouldHandleGenresCorrectly(string? genres, string[] expected)
+    public async Task MetadataSplitPattern_ShouldHandleGenresCorrectly(string? genres, string[] expected)
     {
         // This tests the pattern from AAXCtoM4BConvertor line 376:
         // genres = data.genres?.Split(',').Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList()
@@ -359,10 +377,11 @@ public class AAXCtoM4BConvertorTests
 
         // Assert
         result.Should().BeEquivalentTo(expected);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void MetadataSeriesPattern_WithValidData_ShouldFormatCorrectly()
+    public async Task MetadataSeriesPattern_WithValidData_ShouldFormatCorrectly()
     {
         // This tests the pattern from AAXCtoM4BConvertor lines 373-375:
         // series = !string.IsNullOrWhiteSpace(data.series_title)
@@ -378,6 +397,7 @@ public class AAXCtoM4BConvertorTests
         // Assert
         series.Should().ContainSingle()
             .Which.Should().Be("The Great Series #5");
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -386,7 +406,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData("   ", "5")]
     [InlineData("The Great Series", null)]
     [InlineData("The Great Series", "")]
-    public void MetadataSeriesPattern_WithMissingData_ShouldReturnEmptyList(string? seriesTitle, string? seriesSequence)
+    public async Task MetadataSeriesPattern_WithMissingData_ShouldReturnEmptyList(string? seriesTitle, string? seriesSequence)
     {
         // This tests the null/empty guard pattern
         var series = !string.IsNullOrWhiteSpace(seriesTitle)
@@ -403,6 +423,7 @@ public class AAXCtoM4BConvertorTests
         {
             series.Should().ContainSingle();
         }
+        await Task.CompletedTask;
     }
 
     #endregion
@@ -471,17 +492,19 @@ public class AAXCtoM4BConvertorTests
     #region Constants Tests
 
     [Fact]
-    public void MaxAuthorsBeforeVarious_ShouldBeFour()
+    public async Task MaxAuthorsBeforeVarious_ShouldBeFour()
     {
         // Assert
         AaxcToM4BConvertor.MaxAuthorsBeforeVarious.Should().Be(4);
+        await Task.CompletedTask;
     }
 
     [Fact]
-    public void DefaultAacBitrate_ShouldBe64k()
+    public async Task DefaultAacBitrate_ShouldBe64k()
     {
         // Assert
         AaxcToM4BConvertor.DefaultAacBitrate.Should().Be("64k");
+        await Task.CompletedTask;
     }
 
     [Theory]
@@ -491,7 +514,7 @@ public class AAXCtoM4BConvertorTests
     [InlineData(4, false)]
     [InlineData(5, true)]
     [InlineData(10, true)]
-    public void CleanAuthor_ShouldReturnVariousWhenAuthorsExceedMaxAuthorsBeforeVarious(int authorCount, bool shouldReturnVarious)
+    public async Task CleanAuthor_ShouldReturnVariousWhenAuthorsExceedMaxAuthorsBeforeVarious(int authorCount, bool shouldReturnVarious)
     {
         // Arrange
         var converter = CreateConverter();
@@ -509,6 +532,7 @@ public class AAXCtoM4BConvertorTests
         {
             result.Should().NotBe("Various");
         }
+        await Task.CompletedTask;
     }
 
     #endregion

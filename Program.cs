@@ -111,7 +111,7 @@ internal static class Program
                 clobber,
                 library
             );
-            aaxConverter.Execute();
+            aaxConverter.ExecuteAsync().GetAwaiter().GetResult();
 
             var aaxcConvertor = new AaxcToM4BConvertor(
                 bitrate,
@@ -121,7 +121,7 @@ internal static class Program
                 clobber,
                 library
             );
-            aaxcConvertor.Execute();
+            aaxcConvertor.ExecuteAsync().GetAwaiter().GetResult();
 
             if (loopMode)
             {

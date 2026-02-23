@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Harmony.Dto;
 using Newtonsoft.Json;
 using TagLib;
@@ -44,7 +45,7 @@ namespace Harmony
             _library = library;
         }
 
-        internal void Execute()
+        internal async Task ExecuteAsync()
         {
             var logger = new Logger(_quietMode);
             logger.WriteLine("\bDone");
@@ -56,11 +57,11 @@ namespace Harmony
             logger.WriteLine($"Found {filePaths.Length} aaxc files to process");
             foreach (var filePath in filePaths)
             {
-                ProcessAaxcFile(filePath);
+                await ProcessAaxcFileAsync(filePath).ConfigureAwait(false);
             }
         }
 
-        private void ProcessAaxcFile(string filePath)
+        private async Task ProcessAaxcFileAsync(string filePath)
         {
             var logger = new Logger(_quietMode);
 
@@ -72,22 +73,33 @@ namespace Harmony
             var voucherFile = Path.ChangeExtension(filePath, "voucher");
             var voucher = JsonConvert.DeserializeObject<AudibleVoucherDto>(File.ReadAllText(voucherFile));
 
-            _iv = voucher?.content_license.license_response.iv;
-            _key = voucher?.content_license.license_response.key;
+            if (voucher?.content_license?.license_response is null)
+            {
+                logger.WriteLine("Failed to parse voucher file, skipping.");
+                return;
+            }
+
+            _iv = voucher.content_license.license_response.iv;
+            _key = voucher.content_license.license_response.key;
 
             var aaxInfo = GetAaxcInfo(filePath);
+            if (aaxInfo is null)
+            {
+                logger.WriteLine("Failed to get AAXC info, skipping file.");
+                return;
+            }
             WriteAaxcInfo(aaxInfo, logger);
 
             var regex = new Regex("Part_[0-9]-LC");
             var boxset = regex.Match(filePath).Success;
             var outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
-            var intermediateFile = ProcessToM4A(aaxInfo, filePath, outputDirectory);
+            var intermediateFile = await ProcessToM4AAsync(aaxInfo, filePath, outputDirectory).ConfigureAwait(false);
 
             if (intermediateFile is null)
                 return;
 
             var m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
-            var coverFile = GenerateCover(filePath, outputDirectory);
+            var coverFile = await GenerateCoverAsync(filePath, outputDirectory).ConfigureAwait(false);
             var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
             ChapterConverter.CreateChapterFile(filePath, aaxInfo, chapterFile);
 
@@ -97,16 +109,15 @@ namespace Harmony
 
             var analyser = new FFProbeAnalyzer();
 
-            var goodFileCheck = analyser.AnalyzeFile(m4BFilePath);
-            goodFileCheck.Wait();
+            var goodFileCheck = await analyser.AnalyzeFile(m4BFilePath).ConfigureAwait(false);
 
-            if (!goodFileCheck.Result)
+            if (!goodFileCheck)
             {
                 logger.WriteLine("Problem with file, trying fallback processing");
                 File.Delete(m4BFilePath);
                 outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
-                intermediateFile = FallbackProcessToM4A(aaxInfo, filePath, outputDirectory);
-                coverFile = GenerateCover(filePath, outputDirectory);
+                intermediateFile = await FallbackProcessToM4AAsync(aaxInfo, filePath, outputDirectory).ConfigureAwait(false);
+                coverFile = await GenerateCoverAsync(filePath, outputDirectory).ConfigureAwait(false);
 
                 AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
 
@@ -124,7 +135,7 @@ namespace Harmony
                 .SetOutput(outputFile);
 
             //conversion.OnProgress += ProgressMeter;
-            conversion.Start().Wait();
+            await conversion.Start().ConfigureAwait(false);
 
             logger.WriteLine("Done");
 
@@ -183,7 +194,7 @@ namespace Harmony
 
         private string PrepareOutputDirectory(AaxInfoDto? aaxInfo, bool boxset)
         {
-            string? title = CleanTitle(aaxInfo?.format?.tags?.title);
+            string title = CleanTitle(aaxInfo?.format?.tags?.title) ?? "Unknown";
             if (boxset)
             {
                 title = Regex.Replace(title, @"\bPart [1-9]\b", "").Trim();
@@ -196,7 +207,7 @@ namespace Harmony
 
         }
 
-        private string FallbackProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
+        private async Task<string> FallbackProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
             var logger = new Logger(_quietMode);
 
@@ -214,7 +225,7 @@ namespace Harmony
                 .SetOutput(outputFile);
 
             //conversion.OnProgress += ProgressMeter;
-            conversion.Start().Wait();
+            await conversion.Start().ConfigureAwait(false);
             Console.WriteLine();
             logger.Write("Converting WAV to M4A...       ");
 
@@ -226,7 +237,7 @@ namespace Harmony
                 .SetOutput(outputFile);
 
             //conversion.OnProgress += ProgressMeter;
-            conversion.Start().Wait();
+            await conversion.Start().ConfigureAwait(false);
 
             File.Delete(filePath);
             //File.Delete(chapterFile);
@@ -238,7 +249,7 @@ namespace Harmony
             return outputFile;
         }
 
-        private string? ProcessToM4A(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
+        private async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
             var logger = new Logger(_quietMode);
             logger.Write("Converting AAX to M4A...      ");
@@ -276,7 +287,7 @@ namespace Harmony
                 .SetOutput(outputFile);
 
             //conversion.OnProgress += ProgressMeter;
-            conversion.Start().Wait();
+            await conversion.Start().ConfigureAwait(false);
             Console.WriteLine();
 
             return outputFile;
@@ -287,7 +298,7 @@ namespace Harmony
             Console.Write($"\b\b\b\b\b\b[{args.Percent:D3}%]");
         }
 
-        private string GenerateCover(string filePath, string outputDirectory)
+        private async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
         {
             var logger = new Logger(_quietMode);
             logger.Write("Extracting cover art... ");
@@ -321,7 +332,7 @@ namespace Harmony
                 .AddParameter("-an -vcodec copy")
                 .SetOutput(coverFile);
 
-            conversion.Start().Wait();
+            await conversion.Start().ConfigureAwait(false);
 
             logger.WriteLine("Done");
             return coverFile;
@@ -373,7 +384,7 @@ namespace Harmony
                                 series = !string.IsNullOrWhiteSpace(data.series_title)
                                     ? new List<string> { $"{data.series_title} #{data?.series_sequence}".Trim() }
                                     : new List<string>(),
-                                genres = data.genres?.Split(',').Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
+                                genres = data.genres?.Split(',')?.Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList() ?? new List<string>(),
                                 publishedYear = data.release_date.Year.ToString(),
                                 publishedDate = data.release_date.Date.ToString("yyyy-MM-dd"),
                                 description = data.extended_product_description,
