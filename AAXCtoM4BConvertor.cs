@@ -233,7 +233,8 @@ namespace Harmony
 
             //conversion.OnProgress += ProgressMeter;
             await conversion.Start().ConfigureAwait(false);
-            Console.WriteLine();
+            if (_progressManager == null)
+                Console.WriteLine();
             logger.Write("Converting WAV to M4A...       ");
 
             filePath = outputFile;
@@ -248,7 +249,8 @@ namespace Harmony
 
             File.Delete(filePath);
             //File.Delete(chapterFile);
-            Console.WriteLine();
+            if (_progressManager == null)
+                Console.WriteLine();
 
             //File.Delete(filePath);
             //File.Delete(chapterFile);
@@ -295,7 +297,8 @@ namespace Harmony
 
             //conversion.OnProgress += ProgressMeter;
             await conversion.Start().ConfigureAwait(false);
-            Console.WriteLine();
+            if (_progressManager == null)
+                Console.WriteLine();
 
             return outputFile;
         }
