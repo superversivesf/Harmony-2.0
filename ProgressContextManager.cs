@@ -1,22 +1,25 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using Spectre.Console;
 
 namespace Harmony;
 
 /// <summary>
 /// Manages progress display for file conversion operations using Spectre.Console.
-/// Thread-safe for concurrent updates.
+/// Shows a two-line display: overall progress bar and current book title.
 /// </summary>
 internal class ProgressContextManager : IDisposable
 {
     private readonly CancellationToken _cancellationToken;
     private readonly int _totalFiles;
     private int _currentFileIndex;
-    private ProgressTask? _overallTask;
-    private readonly List<ProgressTask> _operationTasks = new();
+    private string _currentBookTitle = "Starting...";
     private bool _isDisposed;
+    private bool _isComplete;
 
     /// <summary>
     /// Creates a new ProgressContextManager with the specified total file count.
@@ -51,97 +54,90 @@ internal class ProgressContextManager : IDisposable
     public void ThrowIfCancellationRequested() => _cancellationToken.ThrowIfCancellationRequested();
 
     /// <summary>
-    /// Runs the progress display with the specified action.
-    /// This is the main entry point for using the progress manager.
+    /// Formats a filename into a readable book title.
+    /// Converts underscores to spaces and removes the file extension and bitrate suffix.
     /// </summary>
-    /// <param name="action">The action to execute within the progress context.</param>
-    public void Run(Action<ProgressContextManager> action)
+    private static string FormatBookTitle(string fileName)
     {
-        AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(new ProgressColumn[]
-            {
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new SpinnerColumn(),
-            })
-            .Start(ctx =>
-            {
-                // Create the overall progress task
-                _overallTask = ctx.AddTask($"Overall Progress (0 of {_totalFiles})", maxValue: _totalFiles);
-
-                // Execute the user action
-                action(this);
-
-                // Ensure all tasks are complete
-                if (_overallTask.Value < _overallTask.MaxValue)
-                {
-                    _overallTask.Value = _overallTask.MaxValue;
-                }
-            });
+        // Remove file extension
+        var title = Path.GetFileNameWithoutExtension(fileName);
+        
+        // Remove the -AAX_XX_XXX or -AAXC_XX_XXX bitrate suffix pattern
+        title = Regex.Replace(title, @"-AAX_?C?_\d+_\d+$", string.Empty);
+        
+        // Replace underscores with spaces
+        title = title.Replace('_', ' ');
+        
+        return title;
     }
 
-    private ProgressTask? _currentFileTask;
+    /// <summary>
+    /// Creates the status text for the current progress.
+    /// </summary>
+    private string CreateStatusText()
+    {
+        var percentage = (double)_currentFileIndex / _totalFiles * 100;
+        var barLength = 40;
+        var filledLength = (int)(percentage / 100 * barLength);
+        var bar = new string('━', filledLength) + new string('─', barLength - filledLength);
+        
+        var status = $"[green]Overall Progress ({_currentFileIndex} of {_totalFiles})[/] [white]{bar}[/] [yellow]{percentage:F0}%[/]";
+        
+        if (!_isComplete && _currentFileIndex > 0)
+        {
+            status += $"\n[grey]  {_currentBookTitle.EscapeMarkup()}[/]";
+        }
+        else if (_isComplete)
+        {
+            status += "\n[green]  Complete[/]";
+        }
+        
+        return status;
+    }
 
     /// <summary>
     /// Runs the progress display with the specified async action.
-    /// This is the main entry point for using the progress manager with async operations.
+    /// Shows a two-line display: overall progress bar and current book title.
     /// </summary>
     /// <param name="action">The async action to execute within the progress context.</param>
     public async Task RunAsync(Func<ProgressContextManager, Task> action)
     {
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(new ProgressColumn[]
+        await AnsiConsole.Status()
+            .AutoRefresh(true)
+            .Spinner(Spinner.Known.Default)
+            .StartAsync("Starting...", async ctx =>
             {
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new SpinnerColumn(),
-            })
-            .StartAsync(async ctx =>
-            {
-                // Create the overall progress task
-                _overallTask = ctx.AddTask($"Overall Progress (0 of {_totalFiles})", maxValue: _totalFiles);
-                
-                // Create a task to show current file name
-                _currentFileTask = ctx.AddTask("Ready", maxValue: 1);
-                _currentFileTask.Value = 0; // Keep it at 0 so it shows as active
+                ctx.Status(CreateStatusText());
 
-                // Execute the user action
-                await action(this).ConfigureAwait(false);
+                // Execute the user action in background
+                var workTask = action(this);
 
-                // Ensure all tasks are complete
-                if (_overallTask.Value < _overallTask.MaxValue)
+                // Keep updating until complete
+                while (!workTask.IsCompleted)
                 {
-                    _overallTask.Value = _overallTask.MaxValue;
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    ctx.Status(CreateStatusText());
+                    await Task.Delay(100).ConfigureAwait(false);
                 }
-                if (_currentFileTask != null)
-                {
-                    _currentFileTask.Description("Complete");
-                    _currentFileTask.Value = 1;
-                }
+
+                // Mark complete
+                _isComplete = true;
+                ctx.Status(CreateStatusText());
+
+                await workTask.ConfigureAwait(false);
             }).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Starts tracking a new file with its own progress bar.
+    /// Starts tracking a new file.
     /// </summary>
     /// <param name="fileName">Name of the file being processed.</param>
-    /// <returns>Task ID for the file's progress bar.</returns>
+    /// <returns>Task ID for the file.</returns>
     public int StartNewFile(string fileName)
     {
         _cancellationToken.ThrowIfCancellationRequested();
-
         _currentFileIndex++;
-
-        // Update overall progress description
-        _overallTask?.Description($"Overall Progress ({_currentFileIndex} of {_totalFiles})");
-        
-        // Update current file task to show the file name
-        _currentFileTask?.Description(fileName);
-
+        _currentBookTitle = FormatBookTitle(fileName);
         return _currentFileIndex;
     }
 
@@ -151,79 +147,16 @@ internal class ProgressContextManager : IDisposable
     public void CompleteFile()
     {
         _cancellationToken.ThrowIfCancellationRequested();
-
-        _overallTask?.Increment(1);
-
-        // Clear operation tasks for the next file
-        foreach (var task in _operationTasks)
-        {
-            task.StopTask();
-        }
-        _operationTasks.Clear();
     }
 
     /// <summary>
-    /// Adds an operation task for the current file (e.g., probing, converting, extracting cover).
-    /// Must be called within the Run/RunAsync context.
-    /// </summary>
-    /// <param name="progressContext">The Spectre.Console progress context.</param>
-    /// <param name="operationName">Name of the operation.</param>
-    /// <param name="maxValue">Maximum value for the operation (default 100 for percentage).</param>
-    /// <returns>A ProgressTask for tracking this operation.</returns>
-    public ProgressTask AddOperationTask(ProgressContext progressContext, string operationName, double maxValue = 100)
-    {
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        var task = progressContext.AddTask(operationName, maxValue: maxValue);
-        _operationTasks.Add(task);
-        return task;
-    }
-
-    /// <summary>
-    /// Updates the progress of a specific task.
-    /// </summary>
-    /// <param name="task">The task to update.</param>
-    /// <param name="value">The current value.</param>
-    public void UpdateProgress(ProgressTask? task, double value)
-    {
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        task?.Value(value);
-    }
-
-    /// <summary>
-    /// Updates the progress of a specific task by incrementing it.
-    /// </summary>
-    /// <param name="task">The task to update.</param>
-    /// <param name="increment">The amount to increment.</param>
-    public void IncrementProgress(ProgressTask? task, double increment)
-    {
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        task?.Increment(increment);
-    }
-
-    /// <summary>
-    /// Sets the description of a task.
-    /// </summary>
-    /// <param name="task">The task to update.</param>
-    /// <param name="description">The new description.</param>
-    public void SetTaskDescription(ProgressTask? task, string description)
-    {
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        task?.Description(description);
-    }
-
-    /// <summary>
-    /// Disposes the progress manager and cleans up resources.
+    /// Disposes the progress manager.
     /// </summary>
     public void Dispose()
     {
         if (!_isDisposed)
         {
             _isDisposed = true;
-            _operationTasks.Clear();
         }
     }
 }
