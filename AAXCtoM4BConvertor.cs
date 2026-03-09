@@ -71,11 +71,13 @@ namespace Harmony
         {
             var logger = new Logger(_quietMode, _progressManager != null);
 
-            logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
+            if (!logger.IsTuiMode)
+                logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
 
             if (_progressManager?.IsCancelled == true)
             {
-                logger.WriteLine("Operation cancelled.");
+                if (!logger.IsTuiMode)
+                    logger.WriteLine("Operation cancelled.");
                 return;
             }
 
@@ -86,7 +88,8 @@ namespace Harmony
 
             if (voucher?.content_license?.license_response is null)
             {
-                logger.WriteLine("Failed to parse voucher file, skipping.");
+                if (!logger.IsTuiMode)
+                    logger.WriteLine("Failed to parse voucher file, skipping.");
                 return;
             }
 
@@ -96,7 +99,8 @@ namespace Harmony
             var aaxInfo = GetAaxcInfo(filePath);
             if (aaxInfo is null)
             {
-                logger.WriteLine("Failed to get AAXC info, skipping file.");
+                if (!logger.IsTuiMode)
+                    logger.WriteLine("Failed to get AAXC info, skipping file.");
                 return;
             }
             WriteAaxcInfo(aaxInfo, logger);

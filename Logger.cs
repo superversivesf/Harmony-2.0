@@ -18,22 +18,22 @@ internal class Logger(bool quietMode, bool useAnsiConsole = false)
 
     private int _spinnerPos;
 
+    /// <summary>
+    /// Returns true if we're in TUI mode (progress bars active).
+    /// When TUI is active, detailed logging should be suppressed.
+    /// </summary>
+    public bool IsTuiMode => _useAnsiConsole;
+
     internal void WriteLine(string v)
     {
-        if (_quietMode) return;
-        if (_useAnsiConsole)
-            AnsiConsole.MarkupLine($"[grey]{v.EscapeMarkup()}[/]");
-        else
-            Console.WriteLine(v);
+        if (_quietMode || _useAnsiConsole) return;
+        Console.WriteLine(v);
     }
 
     internal void Write(string v)
     {
-        if (_quietMode) return;
-        if (_useAnsiConsole)
-            AnsiConsole.Markup($"[grey]{v.EscapeMarkup()}[/]");
-        else
-            Console.Write(v);
+        if (_quietMode || _useAnsiConsole) return;
+        Console.Write(v);
     }
 
     internal void AdvanceSpinner()

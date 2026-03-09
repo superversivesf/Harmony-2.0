@@ -74,16 +74,19 @@ namespace Harmony
 
             var logger = new Logger(_quietMode, _progressManager != null);
 
-            if (_progressManager == null)
+            if (!logger.IsTuiMode)
                 logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
 
             var aaxInfo = GetAaxInfo(filePath);
             if (aaxInfo is null)
             {
-                logger.WriteLine("Failed to get AAX info, skipping file.");
+                if (!logger.IsTuiMode)
+                    logger.WriteLine("Failed to get AAX info, skipping file.");
                 return;
             }
-            WriteAaxInfo(aaxInfo, logger);
+
+            if (!logger.IsTuiMode)
+                WriteAaxInfo(aaxInfo, logger);
 
             if (_progressManager?.IsCancelled == true)
                 throw new OperationCanceledException();
