@@ -50,7 +50,7 @@ namespace Harmony
 
         internal async Task ExecuteAsync()
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
             logger.WriteLine("\bDone");
 
             logger.Write("Checking folders and purging working files ... ");
@@ -69,7 +69,7 @@ namespace Harmony
 
         private async Task ProcessAaxcFileAsync(string filePath)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
 
             logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
 
@@ -158,7 +158,7 @@ namespace Harmony
 
         private AaxInfoDto? GetAaxcInfo(string filePath)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
             logger.Write("Probing AAXC file... ");
 
             var process = new Process
@@ -212,7 +212,7 @@ namespace Harmony
 
         private async Task<string> FallbackProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
 
             logger.Write("Converting AAX to WAV ...      ");
 
@@ -254,7 +254,7 @@ namespace Harmony
 
         private async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
             logger.Write("Converting AAX to M4A...      ");
 
             var title = CleanTitle(aaxInfo.format?.tags?.title);
@@ -303,7 +303,7 @@ namespace Harmony
 
         private async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
             logger.Write("Extracting cover art... ");
 
             var directory = Path.GetDirectoryName(filePath);
@@ -343,7 +343,7 @@ namespace Harmony
 
         private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
         {
-            var logger = new Logger(_quietMode);
+            var logger = new Logger(_quietMode, _progressManager != null);
             logger.Write("Adding metadata to M4A... ");
 
             using (var file = TagLib.File.Create(filePath))
