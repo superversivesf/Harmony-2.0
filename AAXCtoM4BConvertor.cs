@@ -385,7 +385,7 @@ namespace Harmony
                                 authors = data.authors?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
                                 narrators = data.narrators?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
                                 series = !string.IsNullOrWhiteSpace(data.series_title)
-                                    ? new List<string> { $"{data.series_title} #{data?.series_sequence}".Trim() }
+                                    ? new List<string> { $"{data.series_title} #{data.series_sequence}".Trim() }
                                     : new List<string>(),
                                 genres = data.genres?.Split(',')?.Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList() ?? new List<string>(),
                                 publishedYear = data.release_date.Year.ToString(),
