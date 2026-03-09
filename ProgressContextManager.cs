@@ -82,7 +82,8 @@ internal class ProgressContextManager : IDisposable
     /// </summary>
     private string GetDescription()
     {
-        return $"[{_currentFileIndex}/{_totalFiles}]";
+        // Use double brackets to escape them from Spectre.Console markup parsing
+        return $"[[{_currentFileIndex}/{_totalFiles}]]";
     }
 
     /// <summary>
@@ -126,7 +127,7 @@ internal class ProgressContextManager : IDisposable
                 {
                     _progressTask.Value = _totalFiles;
                     _currentBookTitle = "Complete";
-                    _progressTask.Description($"[{_totalFiles}/{_totalFiles}] Complete");
+                    _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]] Complete");
                 }
             }).ConfigureAwait(false);
     }
