@@ -9,7 +9,7 @@ namespace Harmony;
 
 /// <summary>
 /// Manages progress display for file conversion operations using Spectre.Console.
-/// Shows a single progress bar with current book title to the right of the spinner.
+/// Shows progress bar with fixed alignment: counter | bar | % | spinner | title
 /// </summary>
 internal class ProgressContextManager : IDisposable
 {
@@ -73,25 +73,25 @@ internal class ProgressContextManager : IDisposable
         // Replace underscores with spaces
         title = title.Replace('_', ' ');
         
+        // Truncate if too long
+        if (title.Length > 50)
+            title = title.Substring(0, 47) + "...";
+        
         return title;
     }
 
     /// <summary>
-    /// Gets the current description text for the progress bar.
-    /// Format: [X/Y] with book title on the right side.
+    /// Gets the full status line with everything aligned.
+    /// Format: [[X/Y]]  Book Title (padded to fixed width so bar starts at same column)
     /// </summary>
-    private string GetDescription()
+    private string GetStatusText()
     {
-        // Use double brackets to escape them from Spectre.Console markup parsing
-        return $"[[{_currentFileIndex}/{_totalFiles}]]";
-    }
-
-    /// <summary>
-    /// Gets the text to display after the spinner (the book title).
-    /// </summary>
-    private string GetBookTitleText()
-    {
-        return _currentBookTitle;
+        var counter = $"[[{_currentFileIndex}/{_totalFiles}]]";
+        var title = _currentBookTitle;
+        
+        // Combine with a fixed width padding so the progress bar always starts at the same position
+        // Counter is ~10 chars, title is ~50 chars, total ~60 chars
+        return $"{counter,-10} {title,-50}";
     }
 
     /// <summary>
@@ -100,24 +100,21 @@ internal class ProgressContextManager : IDisposable
     /// <param name="action">The async action to execute within the progress context.</param>
     public async Task RunAsync(Func<ProgressContextManager, Task> action)
     {
-        // Create a custom columns array with the book title on the right
-        var columns = new ProgressColumn[]
-        {
-            new TaskDescriptionColumn(),
-            new ProgressBarColumn(),
-            new PercentageColumn(),
-            new SpinnerColumn(),
-        };
-
         await AnsiConsole.Progress()
             .AutoClear(false)
-            .Columns(columns)
+            .Columns(new ProgressColumn[]
+            {
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn(),
+                new PercentageColumn(),
+                new SpinnerColumn(),
+            })
             .StartAsync(async ctx =>
             {
                 _progressContext = ctx;
                 
-                // Create a single task for overall progress
-                _progressTask = ctx.AddTask(GetDescription(), maxValue: _totalFiles);
+                // Create task with full status (counter + title on left, then bar/spinner)
+                _progressTask = ctx.AddTask(GetStatusText(), maxValue: _totalFiles);
 
                 // Execute the user action
                 await action(this).ConfigureAwait(false);
@@ -142,10 +139,10 @@ internal class ProgressContextManager : IDisposable
         _currentFileIndex++;
         _currentBookTitle = FormatBookTitle(fileName);
         
-        // Update the progress task - include book title in description
+        // Update description with padded text so bar stays aligned
         if (_progressTask != null)
         {
-            _progressTask.Description(GetDescription() + " " + GetBookTitleText());
+            _progressTask.Description(GetStatusText());
         }
     }
 
