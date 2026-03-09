@@ -4,12 +4,32 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Spectre.Console;
+using Spectre.Console.Rendering;
 
 namespace Harmony;
 
 /// <summary>
-/// Manages progress display for file conversion operations.
-/// Shows a two-line display: progress bar on line 1, book title on line 2.
+/// Custom column that displays the current book title on the right side.
+/// </summary>
+internal sealed class BookTitleColumn : ProgressColumn
+{
+    private readonly ProgressContextManager _manager;
+
+    public BookTitleColumn(ProgressContextManager manager)
+    {
+        _manager = manager;
+    }
+
+    public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+    {
+        var title = _manager.CurrentBookTitle;
+        return new Markup($"[grey]{title.EscapeMarkup()}[/]");
+    }
+}
+
+/// <summary>
+/// Manages progress display for file conversion operations using Spectre.Console.
+/// Shows: [[X/Y]] ProgressBar Percentage Spinner BookTitle
 /// </summary>
 internal class ProgressContextManager : IDisposable
 {
@@ -17,6 +37,8 @@ internal class ProgressContextManager : IDisposable
     private readonly int _totalFiles;
     private int _currentFileIndex;
     private string _currentBookTitle = "Starting...";
+    private ProgressContext? _progressContext;
+    private ProgressTask? _progressTask;
     private bool _isDisposed;
 
     /// <summary>
@@ -75,63 +97,48 @@ internal class ProgressContextManager : IDisposable
     }
 
     /// <summary>
-    /// Gets the progress bar as a string representation.
+    /// Gets the description text (just the counter).
     /// </summary>
-    private string GetProgressBar(int width = 40)
+    private string GetDescription()
     {
-        var percentage = (double)_currentFileIndex / _totalFiles;
-        var filled = (int)(percentage * width);
-        var bar = new string('━', filled) + new string('─', width - filled);
-        return bar;
-    }
-
-    /// <summary>
-    /// Gets the full status display.
-    /// Format: [[X/Y]] ProgressBar Percentage Spinner
-    /// Book title on second line.
-    /// </summary>
-    private string GetStatusDisplay()
-    {
-        var percentage = (int)((double)_currentFileIndex / _totalFiles * 100);
-        var counter = $"[[{_currentFileIndex}/{_totalFiles}]]";
-        var bar = GetProgressBar(40);
-        
-        // Line 1: Counter + Bar + Percentage
-        return $"{counter} {bar} {percentage}%";
+        // Use double brackets to escape them from Spectre.Console markup parsing
+        return $"[[{_currentFileIndex}/{_totalFiles}]]";
     }
 
     /// <summary>
     /// Runs the progress display with the specified async action.
-    /// Uses AnsiConsole.Status with custom status text.
+    /// Layout: Counter | ProgressBar | Percentage | Spinner | BookTitle
     /// </summary>
     /// <param name="action">The async action to execute within the progress context.</param>
     public async Task RunAsync(Func<ProgressContextManager, Task> action)
     {
-        // We'll use a simple approach: update the status text with both lines
-        // The status spinner will be on the right side of the status text
-        
-        await AnsiConsole.Status()
-            .AutoRefresh(true)
-            .Spinner(Spinner.Known.Default)
-            .StartAsync("Starting...", async ctx =>
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(new ProgressColumn[]
             {
-                ctx.Status(GetStatusDisplay());
-
-                // Execute the user action in background
-                var workTask = action(this);
-
-                // Keep updating display until complete
-                while (!workTask.IsCompleted)
-                {
-                    _cancellationToken.ThrowIfCancellationRequested();
-                    ctx.Status(GetStatusDisplay());
-                    await Task.Delay(100).ConfigureAwait(false);
-                }
-
-                await workTask.ConfigureAwait(false);
+                new TaskDescriptionColumn(),      // [[X/Y]]
+                new ProgressBarColumn(),          // ━━━━━━━━━━
+                new PercentageColumn(),           // 22%
+                new SpinnerColumn(),              // ⣟
+                new BookTitleColumn(this),        // Book Title
+            })
+            .StartAsync(async ctx =>
+            {
+                _progressContext = ctx;
                 
-                // Final update
-                ctx.Status(GetStatusDisplay() + "\nComplete");
+                // Create a single task for overall progress
+                _progressTask = ctx.AddTask(GetDescription(), maxValue: _totalFiles);
+
+                // Execute the user action
+                await action(this).ConfigureAwait(false);
+
+                // Mark complete
+                if (_progressTask != null)
+                {
+                    _progressTask.Value = _totalFiles;
+                    _currentBookTitle = "Complete";
+                    _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]]");
+                }
             }).ConfigureAwait(false);
     }
 
@@ -144,6 +151,12 @@ internal class ProgressContextManager : IDisposable
         _cancellationToken.ThrowIfCancellationRequested();
         _currentFileIndex++;
         _currentBookTitle = FormatBookTitle(fileName);
+        
+        // Update the progress task description
+        if (_progressTask != null)
+        {
+            _progressTask.Description(GetDescription());
+        }
     }
 
     /// <summary>
@@ -152,6 +165,7 @@ internal class ProgressContextManager : IDisposable
     public void CompleteFile()
     {
         _cancellationToken.ThrowIfCancellationRequested();
+        _progressTask?.Increment(1);
     }
 
     /// <summary>
