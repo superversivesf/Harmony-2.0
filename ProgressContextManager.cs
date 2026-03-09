@@ -82,6 +82,8 @@ internal class ProgressContextManager : IDisposable
             });
     }
 
+    private ProgressTask? _currentFileTask;
+
     /// <summary>
     /// Runs the progress display with the specified async action.
     /// This is the main entry point for using the progress manager with async operations.
@@ -102,6 +104,10 @@ internal class ProgressContextManager : IDisposable
             {
                 // Create the overall progress task
                 _overallTask = ctx.AddTask($"Overall Progress (0 of {_totalFiles})", maxValue: _totalFiles);
+                
+                // Create a task to show current file name
+                _currentFileTask = ctx.AddTask("Ready", maxValue: 1);
+                _currentFileTask.Value = 0; // Keep it at 0 so it shows as active
 
                 // Execute the user action
                 await action(this).ConfigureAwait(false);
@@ -110,6 +116,11 @@ internal class ProgressContextManager : IDisposable
                 if (_overallTask.Value < _overallTask.MaxValue)
                 {
                     _overallTask.Value = _overallTask.MaxValue;
+                }
+                if (_currentFileTask != null)
+                {
+                    _currentFileTask.Description("Complete");
+                    _currentFileTask.Value = 1;
                 }
             }).ConfigureAwait(false);
     }
@@ -127,6 +138,9 @@ internal class ProgressContextManager : IDisposable
 
         // Update overall progress description
         _overallTask?.Description($"Overall Progress ({_currentFileIndex} of {_totalFiles})");
+        
+        // Update current file task to show the file name
+        _currentFileTask?.Description(fileName);
 
         return _currentFileIndex;
     }
