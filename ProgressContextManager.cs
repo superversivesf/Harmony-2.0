@@ -8,8 +8,8 @@ using Spectre.Console;
 namespace Harmony;
 
 /// <summary>
-/// Manages progress display for file conversion operations using Spectre.Console.
-/// Shows progress bar with fixed alignment: counter | bar | % | spinner | title
+/// Manages progress display for file conversion operations.
+/// Shows a two-line display: progress bar on line 1, book title on line 2.
 /// </summary>
 internal class ProgressContextManager : IDisposable
 {
@@ -17,8 +17,6 @@ internal class ProgressContextManager : IDisposable
     private readonly int _totalFiles;
     private int _currentFileIndex;
     private string _currentBookTitle = "Starting...";
-    private ProgressContext? _progressContext;
-    private ProgressTask? _progressTask;
     private bool _isDisposed;
 
     /// <summary>
@@ -73,59 +71,67 @@ internal class ProgressContextManager : IDisposable
         // Replace underscores with spaces
         title = title.Replace('_', ' ');
         
-        // Truncate if too long
-        if (title.Length > 50)
-            title = title.Substring(0, 47) + "...";
-        
         return title;
     }
 
     /// <summary>
-    /// Gets the full status line with everything aligned.
-    /// Format: [[X/Y]]  Book Title (padded to fixed width so bar starts at same column)
+    /// Gets the progress bar as a string representation.
     /// </summary>
-    private string GetStatusText()
+    private string GetProgressBar(int width = 40)
     {
+        var percentage = (double)_currentFileIndex / _totalFiles;
+        var filled = (int)(percentage * width);
+        var bar = new string('━', filled) + new string('─', width - filled);
+        return bar;
+    }
+
+    /// <summary>
+    /// Gets the full status display.
+    /// Format: [[X/Y]] ProgressBar Percentage Spinner
+    /// Book title on second line.
+    /// </summary>
+    private string GetStatusDisplay()
+    {
+        var percentage = (int)((double)_currentFileIndex / _totalFiles * 100);
         var counter = $"[[{_currentFileIndex}/{_totalFiles}]]";
-        var title = _currentBookTitle;
+        var bar = GetProgressBar(40);
         
-        // Combine with a fixed width padding so the progress bar always starts at the same position
-        // Counter is ~10 chars, title is ~50 chars, total ~60 chars
-        return $"{counter,-10} {title,-50}";
+        // Line 1: Counter + Bar + Percentage
+        return $"{counter} {bar} {percentage}%";
     }
 
     /// <summary>
     /// Runs the progress display with the specified async action.
+    /// Uses AnsiConsole.Status with custom status text.
     /// </summary>
     /// <param name="action">The async action to execute within the progress context.</param>
     public async Task RunAsync(Func<ProgressContextManager, Task> action)
     {
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(new ProgressColumn[]
+        // We'll use a simple approach: update the status text with both lines
+        // The status spinner will be on the right side of the status text
+        
+        await AnsiConsole.Status()
+            .AutoRefresh(true)
+            .Spinner(Spinner.Known.Default)
+            .StartAsync("Starting...", async ctx =>
             {
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new SpinnerColumn(),
-            })
-            .StartAsync(async ctx =>
-            {
-                _progressContext = ctx;
-                
-                // Create task with full status (counter + title on left, then bar/spinner)
-                _progressTask = ctx.AddTask(GetStatusText(), maxValue: _totalFiles);
+                ctx.Status(GetStatusDisplay());
 
-                // Execute the user action
-                await action(this).ConfigureAwait(false);
+                // Execute the user action in background
+                var workTask = action(this);
 
-                // Mark complete
-                if (_progressTask != null)
+                // Keep updating display until complete
+                while (!workTask.IsCompleted)
                 {
-                    _progressTask.Value = _totalFiles;
-                    _currentBookTitle = "Complete";
-                    _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]] Complete");
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    ctx.Status(GetStatusDisplay());
+                    await Task.Delay(100).ConfigureAwait(false);
                 }
+
+                await workTask.ConfigureAwait(false);
+                
+                // Final update
+                ctx.Status(GetStatusDisplay() + "\nComplete");
             }).ConfigureAwait(false);
     }
 
@@ -138,12 +144,6 @@ internal class ProgressContextManager : IDisposable
         _cancellationToken.ThrowIfCancellationRequested();
         _currentFileIndex++;
         _currentBookTitle = FormatBookTitle(fileName);
-        
-        // Update description with padded text so bar stays aligned
-        if (_progressTask != null)
-        {
-            _progressTask.Description(GetStatusText());
-        }
     }
 
     /// <summary>
@@ -152,7 +152,6 @@ internal class ProgressContextManager : IDisposable
     public void CompleteFile()
     {
         _cancellationToken.ThrowIfCancellationRequested();
-        _progressTask?.Increment(1);
     }
 
     /// <summary>
