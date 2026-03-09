@@ -31,11 +31,13 @@ namespace Harmony
         private readonly bool _quietMode;
         private List<AudibleLibraryDto>? _library;
         private readonly bool _clobber;
+        private readonly ProgressContextManager? _progressManager;
         private string? _iv;
         private string? _key;
 
         public AaxcToM4BConvertor(int bitrate, bool quietMode, string inputFolder,
-            string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null)
+            string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null,
+            ProgressContextManager? progressManager = null)
         {
             _clobber = clobber;
             _bitrate = bitrate;
@@ -43,6 +45,7 @@ namespace Harmony
             _inputFolder = inputFolder;
             _outputFolder = outputFolder;
             _library = library;
+            _progressManager = progressManager;
         }
 
         internal async Task ExecuteAsync()
@@ -55,9 +58,12 @@ namespace Harmony
             logger.WriteLine("Done");
             var filePaths = Directory.GetFiles(_inputFolder, "*.aaxc", SearchOption.AllDirectories);
             logger.WriteLine($"Found {filePaths.Length} aaxc files to process");
+            
             foreach (var filePath in filePaths)
             {
+                _progressManager?.StartNewFile(Path.GetFileName(filePath));
                 await ProcessAaxcFileAsync(filePath).ConfigureAwait(false);
+                _progressManager?.CompleteFile();
             }
         }
 
@@ -67,6 +73,11 @@ namespace Harmony
 
             logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
 
+            if (_progressManager?.IsCancelled == true)
+            {
+                logger.WriteLine("Operation cancelled.");
+                return;
+            }
 
             // Need to get the voucher and find the IV and Key
 
@@ -128,13 +139,13 @@ namespace Harmony
             logger.Write("Adding Chapters ...      ");
 
             var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapter", string.Empty));
+            
             var conversion = FFmpeg.Conversions.New()
                 .AddParameter($"-i \"{m4BFilePath}\" ")
                 .AddParameter($"-i \"{chapterFile}\" ")
                 .AddParameter($"-map_metadata 1 -codec copy")
                 .SetOutput(outputFile);
 
-            //conversion.OnProgress += ProgressMeter;
             await conversion.Start().ConfigureAwait(false);
 
             logger.WriteLine("Done");
@@ -142,15 +153,7 @@ namespace Harmony
             File.Delete(chapterFile);
             File.Delete(m4BFilePath);
 
-
             logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
-
-            // Move original AAX to storage
-            //var storageFile = Path.Combine(_storageFolder, Path.GetFileName(filePath));
-            //File.Move(filePath, storageFile);
-
-            // Cleanup
-            //File.Delete(coverFile);
         }
 
         private AaxInfoDto? GetAaxcInfo(string filePath)

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using System.Threading;
 using CommandLine;
 using CsvHelper;
 using CsvHelper.Configuration;
@@ -102,26 +103,64 @@ internal static class Program
                 }
             }
 
-            var aaxConverter = new AaxToM4BConvertor(
-                activationBytes!,
-                bitrate,
-                quietMode,
-                inputFolder!,
-                outputFolder!,
-                clobber,
-                library
-            );
-            aaxConverter.ExecuteAsync().GetAwaiter().GetResult();
+            // Count total files before starting progress display
+            var aaxFiles = Directory.GetFiles(inputFolder!, "*.aax", SearchOption.AllDirectories);
+            var aaxcFiles = Directory.GetFiles(inputFolder!, "*.aaxc", SearchOption.AllDirectories);
+            var totalFiles = aaxFiles.Length + aaxcFiles.Length;
 
-            var aaxcConvertor = new AaxcToM4BConvertor(
-                bitrate,
-                quietMode,
-                inputFolder!,
-                outputFolder!,
-                clobber,
-                library
-            );
-            aaxcConvertor.ExecuteAsync().GetAwaiter().GetResult();
+            if (totalFiles == 0)
+            {
+                logger.WriteLine("No AAX or AAXC files found to process.");
+                return;
+            }
+
+            // Setup CancellationTokenSource for graceful shutdown on Ctrl+C
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (sender, e) =>
+            {
+                e.Cancel = true;
+                cts.Cancel();
+                logger.WriteLine("\nCancellation requested. Finishing current file...");
+            };
+
+            // Create ProgressContextManager with total file count
+            using var progressManager = new ProgressContextManager(totalFiles, cts.Token);
+
+            try
+            {
+                // Wrap conversion execution in ProgressContextManager.RunAsync
+                progressManager.RunAsync(async ctx =>
+                {
+                    // Create AAX converter with progress manager and execute
+                    var aaxConverter = new AaxToM4BConvertor(
+                        activationBytes!,
+                        bitrate,
+                        quietMode,
+                        inputFolder!,
+                        outputFolder!,
+                        clobber,
+                        library,
+                        ctx
+                    );
+                    await aaxConverter.ExecuteAsync().ConfigureAwait(false);
+
+                    // Create AAXC converter with progress manager and execute
+                    var aaxcConvertor = new AaxcToM4BConvertor(
+                        bitrate,
+                        quietMode,
+                        inputFolder!,
+                        outputFolder!,
+                        clobber,
+                        library,
+                        ctx
+                    );
+                    await aaxcConvertor.ExecuteAsync().ConfigureAwait(false);
+                }).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                logger.WriteLine("Operation cancelled by user.");
+            }
 
             if (loopMode)
             {

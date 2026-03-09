@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Harmony.Dto;
 using Microsoft.VisualBasic.FileIO;
+using Spectre.Console;
 using TagLib;
 using Xabe.FFmpeg;
 using File = System.IO.File;
@@ -25,9 +26,10 @@ namespace Harmony
         private readonly bool _quietMode;
         private List<AudibleLibraryDto>? _library;
         private readonly bool _clobber;
+        private readonly ProgressContextManager? _progressManager;
 
         public AaxToM4BConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-            string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null)
+            string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null, ProgressContextManager? progressManager = null)
         {
             _clobber = clobber;
             _activationBytes = activationBytes;
@@ -36,10 +38,14 @@ namespace Harmony
             _inputFolder = inputFolder;
             _outputFolder = outputFolder;
             _library = library;
+            _progressManager = progressManager;
         }
 
         internal async Task ExecuteAsync()
         {
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+
             var logger = new Logger(_quietMode);
             logger.WriteLine("\bDone");
 
@@ -48,14 +54,24 @@ namespace Harmony
             logger.WriteLine("Done");
             var filePaths = Directory.GetFiles(_inputFolder, "*.aax", SearchOption.AllDirectories);
             logger.WriteLine($"Found {filePaths.Length} aax files to process\n");
+
             foreach (var filePath in filePaths)
             {
+                if (_progressManager?.IsCancelled == true)
+                    throw new OperationCanceledException();
+                _progressManager?.StartNewFile(Path.GetFileName(filePath));
+
                 await ProcessAaxFileAsync(filePath).ConfigureAwait(false);
+
+                _progressManager?.CompleteFile();
             }
         }
 
         private async Task ProcessAaxFileAsync(string filePath)
         {
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+
             var logger = new Logger(_quietMode);
 
             logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
@@ -68,6 +84,9 @@ namespace Harmony
             }
             WriteAaxInfo(aaxInfo, logger);
 
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+
             var regex = new Regex("Part_[0-9]-LC");
             var boxset = regex.Match(filePath).Success;
             var outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
@@ -75,6 +94,9 @@ namespace Harmony
 
             if (intermediateFile is null)
                 return;
+
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
 
             var m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
             var coverFile = await GenerateCoverAsync(filePath, outputDirectory).ConfigureAwait(false);
@@ -84,6 +106,9 @@ namespace Harmony
             AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
 
             File.Move(intermediateFile, m4BFilePath);
+
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
 
             var analyser = new FFProbeAnalyzer();
 
@@ -102,6 +127,9 @@ namespace Harmony
                 m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
                 File.Move(intermediateFile, m4BFilePath);
             }
+
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
 
             logger.Write("Adding Chapters ...      ");
 
@@ -312,6 +340,9 @@ namespace Harmony
 
         private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
         {
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+            
             var logger = new Logger(_quietMode);
             logger.Write("Adding metadata to M4A... ");
 
