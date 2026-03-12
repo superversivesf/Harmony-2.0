@@ -18,7 +18,7 @@ internal static class Program
     /// </summary>
     public const int SpinnerDelayMs = 50;
 
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
         // dotnet publish -r win-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
         // dotnet publish -r linux-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
@@ -27,9 +27,13 @@ internal static class Program
         // dotnet publish -r osx-x64 -c Release -p:PublishSingleFile=true -p:PublishTrimmed=true
         try
         {
-            Parser.Default.ParseArguments<Options>(args)
-                .WithParsed(RunOptions)
-                .WithNotParsed(HandleParseError);
+            var result = await Parser.Default.ParseArguments<Options>(args)
+                .WithParsedAsync(async options => await RunOptionsAsync(options).ConfigureAwait(false));
+            
+            if (result.Tag == ParserResultType.NotParsed)
+            {
+                HandleParseError(((NotParsed<Options>)result).Errors);
+            }
         }
         catch (Exception e)
         {
@@ -64,7 +68,7 @@ internal static class Program
         logger.WriteLine("\bDone");
     }
 
-    private static void RunOptions(Options options)
+    private static async Task RunOptionsAsync(Options options)
     {
         var clobber = options.Clobber;
         var activationBytes = options.ActivationBytes;
@@ -80,13 +84,13 @@ internal static class Program
 
         if (options.FetchFFMpeg)
         {
-            FetchFFmpegAsync(logger).GetAwaiter().GetResult();
+            await FetchFFmpegAsync(logger).ConfigureAwait(false);
             return;
         }
 
         do
         {
-            FetchFFmpegAsync(logger).GetAwaiter().GetResult();
+            await FetchFFmpegAsync(logger).ConfigureAwait(false);
 
             var config = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
@@ -129,7 +133,7 @@ internal static class Program
             try
             {
                 // Wrap conversion execution in ProgressContextManager.RunAsync
-                progressManager.RunAsync(async ctx =>
+                await progressManager.RunAsync(async ctx =>
                 {
                     // Create AAX converter with progress manager and execute
                     var aaxConverter = new AaxToM4BConvertor(
@@ -155,7 +159,7 @@ internal static class Program
                         ctx
                     );
                     await aaxcConvertor.ExecuteAsync().ConfigureAwait(false);
-                }).GetAwaiter().GetResult();
+                }).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -165,7 +169,7 @@ internal static class Program
             if (loopMode)
             {
                 logger.WriteLine("Run complete, sleeping for 5 minutes");
-                Thread.Sleep(TimeSpan.FromMinutes(5));
+                await Task.Delay(TimeSpan.FromMinutes(5)).ConfigureAwait(false);
             }
 
             // ReSharper disable once LoopVariableIsNeverChangedInsideLoop

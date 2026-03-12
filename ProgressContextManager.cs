@@ -41,6 +41,10 @@ internal class ProgressContextManager : IDisposable
     private ProgressTask? _progressTask;
     private bool _isDisposed;
 
+    // Thread-safe access to shared state
+    private readonly ReaderWriterLockSlim _stateLock = new();
+    private readonly object _progressTaskLock = new();
+
     /// <summary>
     /// Gets the current book title for display.
     /// </summary>
@@ -59,9 +63,17 @@ internal class ProgressContextManager : IDisposable
     }
 
     /// <summary>
-    /// Gets the current file index.
+    /// Gets the current file index (thread-safe).
     /// </summary>
-    public int CurrentFileIndex => _currentFileIndex;
+    public int CurrentFileIndex
+    {
+        get
+        {
+            _stateLock.EnterReadLock();
+            try { return _currentFileIndex; }
+            finally { _stateLock.ExitReadLock(); }
+        }
+    }
 
     /// <summary>
     /// Gets the total number of files.
@@ -86,32 +98,47 @@ internal class ProgressContextManager : IDisposable
     {
         // Remove file extension
         var title = Path.GetFileNameWithoutExtension(fileName);
-        
+
         // Remove the -AAX_XX_XXX or -AAXC_XX_XXX bitrate suffix pattern
         title = Regex.Replace(title, @"-AAX_?C?_\d+_\d+$", string.Empty);
-        
+
         // Replace underscores with spaces
         title = title.Replace('_', ' ');
-        
+
         return title;
     }
 
     /// <summary>
-    /// Gets the description text (just the counter).
+    /// Gets the description text (just the counter) - thread-safe.
     /// </summary>
     private string GetDescription()
     {
-        // Use double brackets to escape them from Spectre.Console markup parsing
-        return $"[[{_currentFileIndex}/{_totalFiles}]]";
+        _stateLock.EnterReadLock();
+        try
+        {
+            // Use double brackets to escape them from Spectre.Console markup parsing
+            return $"[[{_currentFileIndex}/{_totalFiles}]]";
+        }
+        finally
+        {
+            _stateLock.ExitReadLock();
+        }
     }
 
     /// <summary>
     /// Runs the progress display with the specified async action.
     /// Layout: Counter | ProgressBar | Percentage | Spinner | BookTitle
+    /// Runs the action on a background thread to prevent blocking the UI.
     /// </summary>
     /// <param name="action">The async action to execute within the progress context.</param>
     public async Task RunAsync(Func<ProgressContextManager, Task> action)
     {
+        // Check cancellation before starting
+        _cancellationToken.ThrowIfCancellationRequested();
+
+        var progressTaskCompletionSource = new TaskCompletionSource();
+        var workTaskCompletionSource = new TaskCompletionSource();
+
         await AnsiConsole.Progress()
             .AutoClear(false)
             .Columns(new ProgressColumn[]
@@ -122,50 +149,95 @@ internal class ProgressContextManager : IDisposable
                 new SpinnerColumn(),              // ⣟
                 new BookTitleColumn(this),        // Book Title
             })
-            .StartAsync(async ctx =>
+            .StartAsync(ctx =>
             {
                 _progressContext = ctx;
-                
+
                 // Create a single task for overall progress
-                _progressTask = ctx.AddTask(GetDescription(), maxValue: _totalFiles);
-
-                // Execute the user action
-                await action(this).ConfigureAwait(false);
-
-                // Mark complete
-                if (_progressTask != null)
+                lock (_progressTaskLock)
                 {
-                    _progressTask.Value = _totalFiles;
-                    _currentBookTitle = "Complete";
-                    _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]]");
+                    _progressTask = ctx.AddTask(GetDescription(), maxValue: _totalFiles);
                 }
+
+                // Run the work on a background thread
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await action(this).ConfigureAwait(false);
+                        workTaskCompletionSource.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        workTaskCompletionSource.TrySetException(ex);
+                    }
+                }, _cancellationToken);
+
+                // Wait for work completion while keeping UI responsive
+                return workTaskCompletionSource.Task;
             }).ConfigureAwait(false);
+
+        // Mark complete after work is done
+        // Check cancellation before updating UI state
+        _cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_progressTaskLock)
+        {
+            if (_progressTask != null)
+            {
+                _progressTask.Value = _totalFiles;
+                _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]]");
+            }
+        }
+
+        _stateLock.EnterWriteLock();
+        try
+        {
+            _currentBookTitle = "Complete";
+        }
+        finally
+        {
+            _stateLock.ExitWriteLock();
+        }
     }
 
     /// <summary>
-    /// Starts tracking a new file.
+    /// Starts tracking a new file. Thread-safe for background execution.
     /// </summary>
     /// <param name="fileName">Name of the file being processed.</param>
     public void StartNewFile(string fileName)
     {
         _cancellationToken.ThrowIfCancellationRequested();
-        _currentFileIndex++;
-        _currentBookTitle = FormatBookTitle(fileName);
-        
-        // Update the progress task description
-        if (_progressTask != null)
+
+        _stateLock.EnterWriteLock();
+        try
         {
-            _progressTask.Description(GetDescription());
+            _currentFileIndex++;
+            _currentBookTitle = FormatBookTitle(fileName);
+        }
+        finally
+        {
+            _stateLock.ExitWriteLock();
+        }
+
+        // Update the progress task description - lock for thread safety
+        lock (_progressTaskLock)
+        {
+            _progressTask?.Description(GetDescription());
         }
     }
 
     /// <summary>
-    /// Marks the current file as complete and increments progress.
+    /// Marks the current file as complete and increments progress. Thread-safe.
     /// </summary>
     public void CompleteFile()
     {
         _cancellationToken.ThrowIfCancellationRequested();
-        _progressTask?.Increment(1);
+
+        lock (_progressTaskLock)
+        {
+            _progressTask?.Increment(1);
+        }
     }
 
     /// <summary>
@@ -176,6 +248,7 @@ internal class ProgressContextManager : IDisposable
         if (!_isDisposed)
         {
             _isDisposed = true;
+            _stateLock.Dispose();
         }
     }
 }

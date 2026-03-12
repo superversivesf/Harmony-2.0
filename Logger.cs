@@ -38,7 +38,7 @@ internal class Logger(bool quietMode, bool useAnsiConsole = false)
 
     internal void AdvanceSpinner()
     {
-        if (!_quietMode && !_useAnsiConsole)
+        if (!_useAnsiConsole)
             Console.Write("\b" + _spinnerString[_spinnerPos++ % _spinnerString.Length]);
     }
 }

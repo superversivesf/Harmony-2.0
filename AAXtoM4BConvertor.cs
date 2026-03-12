@@ -3,486 +3,81 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Harmony.Dto;
-using Microsoft.VisualBasic.FileIO;
 using Spectre.Console;
-using TagLib;
-using Xabe.FFmpeg;
 using File = System.IO.File;
-using SearchOption = System.IO.SearchOption;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
-namespace Harmony
+namespace Harmony;
+
+/// <summary>
+/// Converts AAX audiobook files to M4B format using activation bytes authentication.
+/// </summary>
+internal class AaxToM4BConvertor : AudiobookConverterBase
 {
-    internal class AaxToM4BConvertor
+    /// <summary>
+    /// Maximum number of authors to display individually before showing "Various".
+    /// </summary>
+    public new const int MaxAuthorCountForIndividualDisplay = AudiobookConverterBase.MaxAuthorCountForIndividualDisplay;
+
+    private readonly string _activationBytes;
+
+    public AaxToM4BConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
+        string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null, ProgressContextManager? progressManager = null)
+        : base(bitrate, quietMode, inputFolder, outputFolder, clobber, library, progressManager)
     {
-        /// <summary>
-        /// Maximum number of authors to display individually before showing "Various".
-        /// </summary>
-        public const int MaxAuthorCountForIndividualDisplay = 4;
+        _activationBytes = activationBytes;
+    }
 
-        private readonly string _activationBytes;
-        private readonly int _bitrate;
-        private readonly string _inputFolder;
-        private readonly string _outputFolder;
-        private readonly bool _quietMode;
-        private List<AudibleLibraryDto>? _library;
-        private readonly bool _clobber;
-        private readonly ProgressContextManager? _progressManager;
+    /// <summary>
+    /// Gets the file extension pattern for AAX files.
+    /// </summary>
+    protected override string FileExtensionPattern => "*.aax";
 
-        public AaxToM4BConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-            string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null, ProgressContextManager? progressManager = null)
+    /// <summary>
+    /// Gets the authentication parameters for AAX files (activation_bytes).
+    /// </summary>
+    protected override IEnumerable<string> GetAuthenticationParameters()
+    {
+        return new[] { "-activation_bytes", _activationBytes };
+    }
+
+    /// <summary>
+    /// Gets file info by probing the AAX file with activation bytes.
+    /// </summary>
+    protected override AaxInfoDto? GetFileInfo(string filePath)
+    {
+        var logger = new Logger(true, false);
+        logger.Write("Probing AAX file... ");
+
+        var process = new Process
         {
-            _clobber = clobber;
-            _activationBytes = activationBytes;
-            _bitrate = bitrate;
-            _quietMode = quietMode;
-            _inputFolder = inputFolder;
-            _outputFolder = outputFolder;
-            _library = library;
-            _progressManager = progressManager;
-        }
-
-        internal async Task ExecuteAsync()
-        {
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            var logger = new Logger(_quietMode, _progressManager != null);
-            logger.WriteLine("\bDone");
-
-            logger.Write("Checking folders and purging working files ... ");
-            CheckFolders();
-            logger.WriteLine("Done");
-            var filePaths = Directory.GetFiles(_inputFolder, "*.aax", SearchOption.AllDirectories);
-            logger.WriteLine($"Found {filePaths.Length} aax files to process\n");
-
-            foreach (var filePath in filePaths)
+            StartInfo = new ProcessStartInfo
             {
-                if (_progressManager?.IsCancelled == true)
-                    throw new OperationCanceledException();
-                _progressManager?.StartNewFile(Path.GetFileName(filePath));
-
-                await ProcessAaxFileAsync(filePath).ConfigureAwait(false);
-
-                _progressManager?.CompleteFile();
+                FileName = "ffprobe",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
             }
-        }
+        };
+        process.StartInfo.ArgumentList.Add("-v");
+        process.StartInfo.ArgumentList.Add("quiet");
+        process.StartInfo.ArgumentList.Add("-print_format");
+        process.StartInfo.ArgumentList.Add("json");
+        process.StartInfo.ArgumentList.Add("-show_format");
+        process.StartInfo.ArgumentList.Add("-show_chapters");
+        process.StartInfo.ArgumentList.Add("-activation_bytes");
+        process.StartInfo.ArgumentList.Add(_activationBytes);
+        process.StartInfo.ArgumentList.Add(filePath);
 
-        private async Task ProcessAaxFileAsync(string filePath)
+        process.Start();
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+
+        logger.WriteLine("Done");
+
+        return JsonSerializer.Deserialize<AaxInfoDto>(output, new JsonSerializerOptions
         {
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            var logger = new Logger(_quietMode, _progressManager != null);
-
-            if (!logger.IsTuiMode)
-                logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
-
-            var aaxInfo = GetAaxInfo(filePath);
-            if (aaxInfo is null)
-            {
-                if (!logger.IsTuiMode)
-                    logger.WriteLine("Failed to get AAX info, skipping file.");
-                return;
-            }
-
-            if (!logger.IsTuiMode)
-                WriteAaxInfo(aaxInfo, logger);
-
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            var regex = new Regex("Part_[0-9]-LC");
-            var boxset = regex.Match(filePath).Success;
-            var outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
-            var intermediateFile = await ProcessToM4AAsync(aaxInfo, filePath, outputDirectory).ConfigureAwait(false);
-
-            if (intermediateFile is null)
-                return;
-
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            var m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
-            var coverFile = await GenerateCoverAsync(filePath, outputDirectory).ConfigureAwait(false);
-            var chapterFile = Path.Combine(outputDirectory, "chapter.txt");
-            ChapterConverter.CreateChapterFile(filePath, aaxInfo, chapterFile);
-
-            AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
-
-            File.Move(intermediateFile, m4BFilePath);
-
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            var analyser = new FFProbeAnalyzer();
-
-            var goodFileCheck = await analyser.AnalyzeFile(m4BFilePath).ConfigureAwait(false);
-
-            if (!goodFileCheck)
-            {
-                logger.WriteLine("Problem with file, trying fallback processing");
-                File.Delete(m4BFilePath);
-                outputDirectory = PrepareOutputDirectory(aaxInfo, boxset);
-                intermediateFile = await FallbackProcessToM4AAsync(aaxInfo, filePath, outputDirectory).ConfigureAwait(false);
-                coverFile = await GenerateCoverAsync(filePath, outputDirectory).ConfigureAwait(false);
-
-                AddMetadataToM4A(intermediateFile, aaxInfo, coverFile);
-
-                m4BFilePath = intermediateFile.Replace(".m4a", "-nochapter.m4b");
-                File.Move(intermediateFile, m4BFilePath);
-            }
-
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-
-            logger.Write("Adding Chapters ...      ");
-
-            var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapter", string.Empty));
-            var conversion = FFmpeg.Conversions.New()
-                .AddParameter($"-i \"{m4BFilePath}\" ")
-                .AddParameter($"-i \"{chapterFile}\" ")
-                .AddParameter($"-map_metadata 1 -codec copy")
-                .SetOutput(outputFile);
-
-            //conversion.OnProgress += ProgressMeter;
-            await conversion.Start().ConfigureAwait(false);
-
-            logger.WriteLine("Done");
-
-            File.Delete(chapterFile);
-            File.Delete(m4BFilePath);
-
-
-            logger.WriteLine($"Successfully converted {Path.GetFileName(filePath)} to M4B.");
-
-            // Move original AAX to storage
-            //var storageFile = Path.Combine(_storageFolder, Path.GetFileName(filePath));
-            //File.Move(filePath, storageFile);
-
-            // Cleanup
-            //File.Delete(coverFile);
-        }
-
-        private AaxInfoDto? GetAaxInfo(string filePath)
-        {
-            var logger = new Logger(_quietMode, _progressManager != null);
-            logger.Write("Probing AAX file... ");
-
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffprobe",
-                    Arguments = $"-v quiet -print_format json -show_format -show_chapters -activation_bytes {_activationBytes} \"{filePath}\"",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                }
-            };
-
-            process.Start();
-            string output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-
-            logger.WriteLine("Done");
-
-            return JsonSerializer.Deserialize<AaxInfoDto>(output, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-        }
-
-        private void WriteAaxInfo(AaxInfoDto? aaxInfo, Logger logger)
-        {
-            logger.WriteLine($"Title: {CleanTitle(aaxInfo?.format?.tags?.title)}");
-            logger.WriteLine($"Author(s): {aaxInfo?.format?.tags?.artist}");
-            if (aaxInfo?.format?.duration is not null)
-                logger.WriteLine(
-                    $"Length: {TimeSpan.FromSeconds(double.Parse(aaxInfo.format.duration)):hh\\:mm\\:ss}");
-            if (aaxInfo?.chapters is not null) logger.WriteLine($"Chapters: {aaxInfo.chapters.Count}");
-        }
-
-        private string PrepareOutputDirectory(AaxInfoDto? aaxInfo, bool boxset)
-        {
-            var title = CleanTitle(aaxInfo?.format?.tags?.title) ?? "Unknown";
-            if (boxset)
-            {
-                title = Regex.Replace(title, @"\bPart [1-9]\b", "").Trim();
-            }
-
-            var author = CleanAuthor(aaxInfo?.format?.tags?.artist);
-            var outputDirectory = Path.Combine(_outputFolder, author, title);
-            Directory.CreateDirectory(outputDirectory);
-            return outputDirectory;
-
-        }
-
-        private async Task<string> FallbackProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
-        {
-            var logger = new Logger(_quietMode, _progressManager != null);
-
-            logger.Write("Converting AAX to WAV ...      ");
-
-            var title = CleanTitle(aaxInfo.format?.tags?.title);
-            var filename = title;
-            var outputFile = Path.Combine(outputDirectory, filename + ".wav");
-            var conversion = FFmpeg.Conversions.New()
-                //.AddParameter(" -loglevel error -stats")
-                .AddParameter($"-activation_bytes \"{_activationBytes}\" ")
-                .AddParameter($"-i \"{filePath}\" ")
-                .AddParameter("-vn -codec:a pcm_s16le -q:a 0 ")
-                .SetOutput(outputFile);
-
-            //conversion.OnProgress += ProgressMeter;
-            await conversion.Start().ConfigureAwait(false);
-            if (_progressManager == null)
-                Console.WriteLine();
-            logger.Write("Converting WAV to M4A...       ");
-
-            filePath = outputFile;
-            outputFile = Path.Combine(outputDirectory, filename + ".m4a");
-            conversion = FFmpeg.Conversions.New()
-                .AddParameter($"-i \"{filePath}\" ")
-                .AddParameter("-vn -codec:a aac -b:a 64k ")
-                .SetOutput(outputFile);
-
-            //conversion.OnProgress += ProgressMeter;
-            await conversion.Start().ConfigureAwait(false);
-
-            File.Delete(filePath);
-            //File.Delete(chapterFile);
-            if (_progressManager == null)
-                Console.WriteLine();
-
-            //File.Delete(filePath);
-            //File.Delete(chapterFile);
-
-            return outputFile;
-        }
-
-        private async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
-        {
-            var logger = new Logger(_quietMode, _progressManager != null);
-            logger.Write("Converting AAX to M4A...      ");
-
-            var title = CleanTitle(aaxInfo.format?.tags?.title);
-            var filename = title;
-            var outputFile = Path.Combine(outputDirectory, filename + ".m4a");
-
-            var m4BFilePath = Path.ChangeExtension(outputFile, "m4b");
-
-            if (File.Exists(m4BFilePath) && _clobber)
-            {
-                logger.WriteLine("\nFile Already Exists ... Deleting");
-
-                File.Delete(m4BFilePath);
-            }
-            else if (File.Exists(m4BFilePath))
-            {
-                logger.WriteLine("\nFile Already Exists ... Skipping");
-                return null;
-            }
-
-
-            if (File.Exists(outputFile))
-            {
-                File.Delete(outputFile);
-            }
-
-            var conversion = FFmpeg.Conversions.New()
-                //.AddParameter(" -loglevel error -stats")
-                .AddParameter($"-activation_bytes \"{_activationBytes}\" ")
-                .AddParameter($"-i \"{filePath}\" ")
-                .AddParameter("-map_chapters -1 -vn -codec:a copy -b:a 64k ")
-                .SetOutput(outputFile);
-
-            //conversion.OnProgress += ProgressMeter;
-            await conversion.Start().ConfigureAwait(false);
-            if (_progressManager == null)
-                Console.WriteLine();
-
-            return outputFile;
-        }
-
-        private async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
-        {
-            var logger = new Logger(_quietMode, _progressManager != null);
-            logger.Write("Extracting cover art... ");
-
-            var directory = Path.GetDirectoryName(filePath);
-            var filename = Path.GetFileName(filePath);
-            var baseName = filename.Split("-AAX")[0];
-            var pattern = $@"^{Regex.Escape(baseName)}_\(\d+\)\.jpg$";
-            var matchingFile = directory is not null
-                ? Directory.GetFiles(directory, "*.jpg")
-                    .Where(f => Regex.IsMatch(Path.GetFileName(f), pattern, RegexOptions.IgnoreCase))
-                    .Select(f => new FileInfo(f))
-                    .OrderByDescending(f => f.Length)
-                    .Select(f => f.Name).FirstOrDefault()
-                : null;
-
-            if (matchingFile is not null && directory is not null)
-            {
-                logger.WriteLine("Done");
-                return Path.Combine(directory, matchingFile);
-            }
-
-            var coverFile = Path.Combine(outputDirectory, "Cover.jpg");
-            var conversion = FFmpeg.Conversions.New()
-                .AddParameter($"-activation_bytes {_activationBytes}")
-                .AddParameter($"-i \"{filePath}\"")
-                .AddParameter("-an -vcodec copy")
-                .SetOutput(coverFile);
-
-            await conversion.Start().ConfigureAwait(false);
-
-            logger.WriteLine("Done");
-            return coverFile;
-        }
-
-        string ProcessTitleForComparison(string input)
-        {
-            return Regex.Replace(input.ToLowerInvariant(), @"[^a-z0-9]", "");
-        }
-
-        private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
-        {
-            if (_progressManager?.IsCancelled == true)
-                throw new OperationCanceledException();
-            
-            var logger = new Logger(_quietMode, _progressManager != null);
-            logger.Write("Adding metadata to M4A... ");
-
-            using (var file = TagLib.File.Create(filePath))
-            {
-                var tag = file.GetTag(TagTypes.Apple);
-
-                var found = false;
-                if (_library is not null)
-                {
-                    var lookupTable = _library
-                        .GroupBy(dto => ProcessTitleForComparison(dto.title + dto.subtitle))
-                        .ToDictionary(
-                            group => group.Key,
-                            group => group.ToList()
-                        );
-
-
-                    var title = aaxInfo?.format?.tags?.title;
-                    if (title is null)
-                    {
-                        found = false;
-                    }
-                    else
-                    {
-                        var regex = new Regex("Part [0-9]");
-                        var boxset = regex.Match(title).Success;
-                        var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
-
-                        string processedTitleString = ProcessTitleForComparison(titleString);
-
-                        lookupTable.TryGetValue(processedTitleString, out var dataList);
-
-                        var data = dataList?.Count == 1 ? dataList[0] : null;
-
-                        if (dataList?.Count > 1)
-                            logger.WriteLine($"Duplicate Title Found -> {titleString}");
-
-                        if (data is not null)
-                        {
-                            found = true;
-                            tag.Copyright = aaxInfo?.format?.tags?.copyright;
-                            tag.AlbumArtists = data.authors?.Split(",") ?? Array.Empty<string>();
-                            tag.Title = data.title;
-                            tag.Album = data.title;
-                            tag.Subtitle = data.subtitle;
-                            tag.Year = (uint)data.release_date.Year;
-                            tag.Composers = data.narrators?.Split(",") ?? Array.Empty<string>();
-                            tag.Description = data.extended_product_description;
-                            tag.Genres = data.genres?.Split(",") ?? Array.Empty<string>();
-                            tag.AmazonId = data.asin;
-                        }
-
-                        var metadata = new AbsMetadata();
-
-                        metadata.title = data?.title;
-                        metadata.subtitle = data?.subtitle;
-                        metadata.authors = data?.authors?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
-                        metadata.narrators = data?.narrators?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
-                        metadata.series = !string.IsNullOrWhiteSpace(data?.series_title)
-                            ? new List<string> { $"{data?.series_title} #{data?.series_sequence}".Trim() }
-                            : new List<string>();
-                        metadata.genres = data?.genres?.Split(',').Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
-                        metadata.publishedYear = data?.release_date.Year.ToString();
-                        metadata.publishedDate = data?.release_date.Date.ToString("yyyy-MM-dd");
-                        metadata.description = data?.extended_product_description;
-                        metadata.asin = data?.asin;
-
-                        var options = new JsonSerializerOptions { WriteIndented = true };
-                        var metadataString = JsonSerializer.Serialize(metadata, options);
-                        var metadataFile = Path.Combine(Path.GetDirectoryName(filePath) ?? string.Empty, "metadata.json");
-                        File.WriteAllText(metadataFile, metadataString);
-                    }
-                }
-
-                if (!found)
-                {
-                    tag.Title = aaxInfo?.format?.tags?.title;
-                    tag.Performers = new[] { aaxInfo?.format?.tags?.artist };
-                    tag.Album = aaxInfo?.format?.tags?.album;
-                    if (aaxInfo?.format?.tags?.date is not null)
-                        tag.Year = uint.Parse(aaxInfo.format.tags.date);
-                    tag.Genres = new[] { aaxInfo?.format?.tags?.genre };
-                    tag.Copyright = aaxInfo?.format?.tags?.copyright;
-
-
-                    var metadata = new AbsMetadata();
-
-                    metadata.title = aaxInfo?.format?.tags?.title;
-                    metadata.authors = aaxInfo?.format?.tags?.artist?.Split(",").ToList();
-
-                    var options = new JsonSerializerOptions { WriteIndented = true };
-                    var metadataString = JsonSerializer.Serialize(metadata, options);
-                    var metadataFile = Path.Combine(Path.GetDirectoryName(filePath) ?? string.Empty, "metadata.json");
-                    File.WriteAllText(metadataFile, metadataString);
-
-                }
-                if (File.Exists(coverPath))
-                {
-                    var coverPicture = new Picture(coverPath)
-                    {
-                        Type = PictureType.FrontCover,
-                        Description = "Cover",
-                        MimeType = System.Net.Mime.MediaTypeNames.Image.Jpeg
-                    };
-                    tag.Pictures = new IPicture[] { coverPicture };
-                }
-                file.Save();
-            }
-            logger.WriteLine("Done");
-        }
-
-        private string? CleanTitle(string? title)
-        {
-            return title?.Replace("(Unabridged)", string.Empty).Replace(":", " -").Replace("'", string.Empty)
-                .Replace("?", string.Empty).Trim();
-        }
-
-        private string CleanAuthor(string? name)
-        {
-            if (string.IsNullOrEmpty(name)) return "Unknown";
-
-            var authors = name.Split(',');
-            if (authors.Length > MaxAuthorCountForIndividualDisplay) return "Various";
-
-            return name.Replace("Jr.", "Jr").Trim();
-        }
-
-        private void CheckFolders()
-        {
-            if (!Directory.Exists(_inputFolder)) throw new Exception($"Input folder does not exist: {_inputFolder}");
-            if (!Directory.Exists(_outputFolder)) throw new Exception($"Output folder does not exist: {_outputFolder}");
-
-        }
+            PropertyNameCaseInsensitive = true
+        });
     }
 }

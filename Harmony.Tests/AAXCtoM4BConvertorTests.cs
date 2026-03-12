@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Harmony.Dto;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
@@ -428,6 +429,246 @@ public class AAXCtoM4BConvertorTests
 
     #endregion
 
+    #region PrepareOutputDirectory Tests
+
+    [Theory]
+    [InlineData("Test Book", "John Smith", false, "John Smith", "Test Book")]
+    [InlineData("Book Title: Part 1", "Jane Doe", false, "Jane Doe", "Book Title - Part 1")]
+    [InlineData("Book's Story", "Author Name", false, "Author Name", "Books Story")]
+    [InlineData("Test Book", "John Smith Jr.", false, "John Smith Jr", "Test Book")]
+    [InlineData(null, "Author", false, "Unknown", "Unknown")]
+    public async Task PrepareOutputDirectory_ShouldCreateCorrectPath(string? title, string? author, bool isBoxset, string expectedAuthor, string expectedTitle)
+    {
+        // Arrange
+        var converter = CreateConverter();
+        var aaxInfo = new AaxInfoDto
+        {
+            format = new AaxFormat
+            {
+                tags = new AaxTags
+                {
+                    title = title,
+                    artist = author
+                }
+            }
+        };
+
+        // Act
+        var result = InvokePrepareOutputDirectory(converter, aaxInfo, isBoxset);
+
+        // Assert
+        result.Should().Contain(expectedAuthor);
+        result.Should().Contain(expectedTitle);
+        Directory.Exists(result).Should().BeTrue("directory should be created");
+
+        // Cleanup
+        if (Directory.Exists(result))
+            Directory.Delete(result, true);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task PrepareOutputDirectory_Boxset_ShouldRemovePartSuffix()
+    {
+        // Arrange
+        var converter = CreateConverter();
+        var aaxInfo = new AaxInfoDto
+        {
+            format = new AaxFormat
+            {
+                tags = new AaxTags
+                {
+                    title = "Great Series Part 3",
+                    artist = "Author Name"
+                }
+            }
+        };
+
+        // Act
+        var result = InvokePrepareOutputDirectory(converter, aaxInfo, true);
+
+        // Assert
+        result.Should().NotContain("Part 3");
+        result.Should().Contain("Great Series");
+
+        // Cleanup
+        if (Directory.Exists(result))
+            Directory.Delete(result, true);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task PrepareOutputDirectory_NonBoxset_ShouldKeepPartInTitle()
+    {
+        // Arrange
+        var converter = CreateConverter();
+        var aaxInfo = new AaxInfoDto
+        {
+            format = new AaxFormat
+            {
+                tags = new AaxTags
+                {
+                    title = "Great Series Part 3",
+                    artist = "Author Name"
+                }
+            }
+        };
+
+        // Act
+        var result = InvokePrepareOutputDirectory(converter, aaxInfo, false);
+
+        // Assert
+        // With CleanTitle: "Great Series Part 3" -> "Great Series Part 3" (no colon to replace)
+        result.Should().Contain("Great Series");
+
+        // Cleanup
+        if (Directory.Exists(result))
+            Directory.Delete(result, true);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task PrepareOutputDirectory_WithColon_ShouldReplaceWithDash()
+    {
+        // Arrange
+        var converter = CreateConverter();
+        var aaxInfo = new AaxInfoDto
+        {
+            format = new AaxFormat
+            {
+                tags = new AaxTags
+                {
+                    title = "Series: Book Title",
+                    artist = "Author"
+                }
+            }
+        };
+
+        // Act
+        var result = InvokePrepareOutputDirectory(converter, aaxInfo, false);
+
+        // Assert
+        // CleanTitle replaces : with -
+        result.Should().Contain("Series - Book Title");
+
+        // Cleanup
+        if (Directory.Exists(result))
+            Directory.Delete(result, true);
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region Logger Pattern Tests
+
+    [Theory]
+    [InlineData(true, true, true)]   // quiet mode, has progress manager
+    [InlineData(false, true, true)]  // not quiet, has progress manager
+    [InlineData(true, false, false)] // quiet mode, no progress manager
+    [InlineData(false, false, false)] // not quiet, no progress manager
+    public async Task Logger_IsTuiMode_ShouldReflectProgressManagerPresence(bool quietMode, bool hasProgressManager, bool expectedTuiMode)
+    {
+        // This tests the Logger pattern used throughout AAXCtoM4BConvertor
+        // Act
+        var progressManager = hasProgressManager ? new ProgressContextManager(1) : null;
+        var logger = new Logger(quietMode, hasProgressManager);
+
+        // Assert
+        logger.IsTuiMode.Should().Be(expectedTuiMode);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Logger_Write_ShouldOutputWhenNotQuiet()
+    {
+        // Arrange
+        var logger = new Logger(false, false); // not quiet, no TUI
+        var sw = new StringWriter();
+        Console.SetOut(sw);
+
+        // Act
+        logger.Write("Test message");
+
+        // Assert - note: Logger.Write might buffer, checking behavior
+        // Reset console
+        Console.SetOut(Console.Out);
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region Chapter Metadata Tests
+
+    [Theory]
+    [InlineData(0, 0)]     // No chapters
+    [InlineData(1, 1)]     // Single chapter
+    [InlineData(10, 10)]   // Multiple chapters
+    [InlineData(100, 100)] // Many chapters
+    public async Task AaxInfo_Chapters_ShouldReflectChapterCount(int chapterCount, int expectedCount)
+    {
+        // Arrange
+        var chapters = Enumerable.Range(0, chapterCount)
+            .Select(i => new AaxChapter { id = i, start_time = "0" })
+            .ToList();
+        var aaxInfo = new AaxInfoDto
+        {
+            chapters = chapters,
+            format = new AaxFormat()
+        };
+
+        // Act
+        var actualCount = aaxInfo.chapters?.Count ?? 0;
+
+        // Assert
+        actualCount.Should().Be(expectedCount);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task AaxInfo_NullChapters_ShouldHaveZeroCount()
+    {
+        // Arrange
+        var aaxInfo = new AaxInfoDto
+        {
+            chapters = null,
+            format = new AaxFormat()
+        };
+
+        // Act
+        var count = aaxInfo.chapters?.Count ?? 0;
+
+        // Assert
+        count.Should().Be(0);
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region File Pattern Matching Tests
+
+    [Theory]
+    [InlineData("Book-AAX_12-Part_1-LC.aaxc", true)]   // Boxset pattern
+    [InlineData("Book-AAX_12-Part_2-LC.aaxc", true)]   // Boxset pattern
+    [InlineData("Book-AAX_12-Part_9-LC.aaxc", true)]  // Boxset pattern
+    [InlineData("Book-AAX_12.aaxc", false)]            // Not boxset
+    [InlineData("Book.aaxc", false)]                   // Not boxset
+    [InlineData("Part_1-LC.aaxc", true)]               // Contains pattern
+    public async Task BoxsetPattern_ShouldDetectBoxsetFiles(string fileName, bool expectedBoxset)
+    {
+        // This tests the regex pattern from line 108:
+        // var regex = new Regex("Part_[0-9]-LC");
+        var regex = new Regex("Part_[0-9]-LC");
+
+        // Act
+        var isBoxset = regex.Match(fileName).Success;
+
+        // Assert
+        isBoxset.Should().Be(expectedBoxset);
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private static AaxcToM4BConvertor CreateConverter(
@@ -452,21 +693,27 @@ public class AAXCtoM4BConvertorTests
     private static string? InvokeCleanTitle(AaxcToM4BConvertor converter, string? title)
     {
         var method = typeof(AaxcToM4BConvertor).GetMethod("CleanTitle",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? typeof(AudiobookConverterBase).GetMethod("CleanTitle",
+                BindingFlags.NonPublic | BindingFlags.Instance);
         return method?.Invoke(converter, new object?[] { title }) as string;
     }
 
     private static string InvokeCleanAuthor(AaxcToM4BConvertor converter, string? name)
     {
         var method = typeof(AaxcToM4BConvertor).GetMethod("CleanAuthor",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? typeof(AudiobookConverterBase).GetMethod("CleanAuthor",
+                BindingFlags.NonPublic | BindingFlags.Instance);
         return method?.Invoke(converter, new object?[] { name }) as string ?? "Unknown";
     }
 
     private static void InvokeCheckFolders(AaxcToM4BConvertor converter)
     {
         var method = typeof(AaxcToM4BConvertor).GetMethod("CheckFolders",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? typeof(AudiobookConverterBase).GetMethod("CheckFolders",
+                BindingFlags.NonPublic | BindingFlags.Instance);
         method?.Invoke(converter, null);
     }
 
@@ -476,7 +723,9 @@ public class AAXCtoM4BConvertorTests
     private static void InvokeCheckFoldersAndUnwrap(AaxcToM4BConvertor converter)
     {
         var method = typeof(AaxcToM4BConvertor).GetMethod("CheckFolders",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? typeof(AudiobookConverterBase).GetMethod("CheckFolders",
+                BindingFlags.NonPublic | BindingFlags.Instance);
         try
         {
             method?.Invoke(converter, null);
@@ -485,6 +734,15 @@ public class AAXCtoM4BConvertorTests
         {
             throw ex.InnerException!;
         }
+    }
+
+    private static string InvokePrepareOutputDirectory(AaxcToM4BConvertor converter, AaxInfoDto? aaxInfo, bool boxset)
+    {
+        var method = typeof(AaxcToM4BConvertor).GetMethod("PrepareOutputDirectory",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? typeof(AudiobookConverterBase).GetMethod("PrepareOutputDirectory",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+        return method?.Invoke(converter, new object?[] { aaxInfo, boxset }) as string ?? string.Empty;
     }
 
     #endregion

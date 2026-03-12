@@ -43,8 +43,23 @@ internal class ChapterConverter
             for (int i = 0; i < aaxinfo.chapters.Count; i++)
             {
                 var chapter = aaxinfo.chapters[i];
-                double startTime = double.Parse(chapter.start_time) * 1000.0;
-                double endTime = (double.Parse(chapter.end_time) * 1000.0) - 1.0;
+
+                // Validate start_time parsing
+                if (!double.TryParse(chapter.start_time, out double startTime))
+                {
+                    // Skip chapter with invalid start time
+                    continue;
+                }
+
+                // Validate end_time parsing
+                if (!double.TryParse(chapter.end_time, out double endTime))
+                {
+                    // Skip chapter with invalid end time
+                    continue;
+                }
+
+                startTime *= 1000.0;
+                endTime = (endTime * 1000.0) - 1.0;
 
                 sb.AppendLine("[CHAPTER]");
                 sb.AppendLine("TIMEBASE=1/1000");
