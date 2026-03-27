@@ -4,3 +4,17 @@ obj/
 riderModule.iml
 /_ReSharper.Caches/
 samples/*
+
+# AI Agent Artifacts
+.claude/
+.codex/
+.cursor/
+.gemini/
+.opencode/
+.aider*
+.cursor*
+CLAUDE.md
+GEMINI.md
+COPILOT.md
+*.backup
+.hive/
