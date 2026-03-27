@@ -169,14 +169,14 @@ internal abstract class AudiobookConverterBase
         var outputFile = Path.Combine(outputDirectory, m4BFilePath.Replace("-nochapter", string.Empty));
         var conversion = FFmpeg.Conversions.New()
             .AddParameter("-i")
-            .AddParameter(m4BFilePath)
+            .AddParameter($"\"{m4BFilePath}\"")
             .AddParameter("-i")
-            .AddParameter(chapterFile)
+            .AddParameter($"\"{chapterFile}\"")
             .AddParameter("-map_metadata")
             .AddParameter("1")
             .AddParameter("-codec")
             .AddParameter("copy")
-            .SetOutput(outputFile);
+            .SetOutput($"\"{outputFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
 
@@ -236,13 +236,13 @@ internal abstract class AudiobookConverterBase
         
         conversion
             .AddParameter("-i")
-            .AddParameter(filePath)
+            .AddParameter($"\"{filePath}\"")
             .AddParameter("-vn")
             .AddParameter("-codec:a")
             .AddParameter("pcm_s16le")
             .AddParameter("-q:a")
             .AddParameter("0")
-            .SetOutput(outputFile);
+            .SetOutput($"\"{outputFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
         if (_progressManager == null)
@@ -253,13 +253,13 @@ internal abstract class AudiobookConverterBase
         outputFile = Path.Combine(outputDirectory, filename + ".m4a");
         conversion = FFmpeg.Conversions.New()
             .AddParameter("-i")
-            .AddParameter(filePath)
+            .AddParameter($"\"{filePath}\"")
             .AddParameter("-vn")
             .AddParameter("-codec:a")
             .AddParameter("aac")
             .AddParameter("-b:a")
             .AddParameter($"{_bitrate}k")
-            .SetOutput(outputFile);
+            .SetOutput($"\"{outputFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
 
@@ -281,8 +281,8 @@ internal abstract class AudiobookConverterBase
 
         var m4BFilePath = Path.ChangeExtension(outputFile, "m4b");
 
-        // Handle existing M4B file - TOCTOU-safe: try operations directly and catch IOException
-        try
+        // Handle existing M4B file
+        if (File.Exists(m4BFilePath))
         {
             if (_clobber)
             {
@@ -295,29 +295,31 @@ internal abstract class AudiobookConverterBase
                 return null;
             }
         }
-        catch (FileNotFoundException)
+        
+        // Clean up intermediate file if it exists
+        if (File.Exists(outputFile))
         {
-            // File didn't exist, proceed normally
+            try
+            {
+                File.Delete(outputFile);
+            }
+            catch (IOException ex)
+            {
+                logger.WriteLine($"\nWarning: Could not delete intermediate file {outputFile}: {ex.Message}");
+            }
         }
-        catch (IOException ex)
+        
+        // Clean up intermediate file if it exists
+        if (File.Exists(outputFile))
         {
-            // File may be locked or inaccessible - log and skip
-            logger.WriteLine($"\nFile access error for {m4BFilePath}: {ex.Message} ... Skipping");
-            return null;
-        }
-
-        // Clean up intermediate file - TOCTOU-safe
-        try
-        {
-            File.Delete(outputFile);
-        }
-        catch (FileNotFoundException)
-        {
-            // File didn't exist, no problem
-        }
-        catch (IOException ex)
-        {
-            logger.WriteLine($"\nWarning: Could not delete intermediate file {outputFile}: {ex.Message}");
+            try
+            {
+                File.Delete(outputFile);
+            }
+            catch (IOException ex)
+            {
+                logger.WriteLine($"\nWarning: Could not delete intermediate file {outputFile}: {ex.Message}");
+            }
         }
 
         var authParams = GetAuthenticationParameters();
@@ -331,7 +333,7 @@ internal abstract class AudiobookConverterBase
         
         conversion
             .AddParameter("-i")
-            .AddParameter(filePath)
+            .AddParameter($"\"{filePath}\"")
             .AddParameter("-map_chapters")
             .AddParameter("-1")
             .AddParameter("-vn")
@@ -339,7 +341,7 @@ internal abstract class AudiobookConverterBase
             .AddParameter("copy")
             .AddParameter("-b:a")
             .AddParameter("64k")
-            .SetOutput(outputFile);
+            .SetOutput($"\"{outputFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
         if (_progressManager == null)
@@ -386,11 +388,11 @@ internal abstract class AudiobookConverterBase
         
         conversion
             .AddParameter("-i")
-            .AddParameter(filePath)
+            .AddParameter($"\"{filePath}\"")
             .AddParameter("-an")
             .AddParameter("-vcodec")
             .AddParameter("copy")
-            .SetOutput(coverFile);
+            .SetOutput($"\"{coverFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
 
@@ -420,14 +422,15 @@ internal abstract class AudiobookConverterBase
                         group => group.ToList()
                     );
 
-                var title = aaxInfo?.format?.tags?.title;
-                if (title is not null)
-                {
-                    var regex = new Regex("Part [0-9]");
-                    var boxset = regex.Match(title).Success;
-                    var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
+                    var title = aaxInfo?.format?.tags?.title;
+                    if (title is not null)
+                    {
+                        var regex = new Regex("Part [0-9]");
+                        var boxset = regex.Match(title).Success;
+                        var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
+                        titleString = Regex.Replace(titleString, @"\(Unabridged\)", "").Trim();
 
-                    string processedTitleString = ProcessTitleForComparison(titleString);
+                        string processedTitleString = ProcessTitleForComparison(titleString);
 
                     lookupTable.TryGetValue(processedTitleString, out var dataList);
 
