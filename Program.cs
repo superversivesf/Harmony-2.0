@@ -71,7 +71,6 @@ internal static class Program
     private static async Task RunOptionsAsync(Options options)
     {
         var clobber = options.Clobber;
-        var activationBytes = options.ActivationBytes;
         var bitrate = options.Bitrate;
         var inputFolder = options.InputFolder;
         var outputFolder = options.OutputFolder;
@@ -107,14 +106,23 @@ internal static class Program
                 }
             }
 
-            // Count total files before starting progress display
+            // Check for AAX files and warn user (AAX is deprecated)
             var aaxFiles = Directory.GetFiles(inputFolder!, "*.aax", SearchOption.AllDirectories);
+            if (aaxFiles.Length > 0)
+            {
+                logger.WriteLine("WARNING: AAX files are no longer supported.");
+                logger.WriteLine($"Found {aaxFiles.Length} AAX file(s). Please use AAXC files instead.");
+                logger.WriteLine("AAX files require activation bytes which are no longer supported in this version.");
+                return;
+            }
+
+            // Count total AAXC files before starting progress display
             var aaxcFiles = Directory.GetFiles(inputFolder!, "*.aaxc", SearchOption.AllDirectories);
-            var totalFiles = aaxFiles.Length + aaxcFiles.Length;
+            var totalFiles = aaxcFiles.Length;
 
             if (totalFiles == 0)
             {
-                logger.WriteLine("No AAX or AAXC files found to process.");
+                logger.WriteLine("No AAXC files found to process.");
                 return;
             }
 
@@ -135,19 +143,6 @@ internal static class Program
                 // Wrap conversion execution in ProgressContextManager.RunAsync
                 await progressManager.RunAsync(async ctx =>
                 {
-                    // Create AAX converter with progress manager and execute
-                    var aaxConverter = new AaxToM4BConvertor(
-                        activationBytes!,
-                        bitrate,
-                        quietMode,
-                        inputFolder!,
-                        outputFolder!,
-                        clobber,
-                        library,
-                        ctx
-                    );
-                    await aaxConverter.ExecuteAsync().ConfigureAwait(false);
-
                     // Create AAXC converter with progress manager and execute
                     var aaxcConvertor = new AaxcToM4BConvertor(
                         bitrate,
@@ -193,11 +188,6 @@ internal static class Program
 
         [Option('o', "OutputFolder", Required = false, HelpText = "The folder that will contain your M4B files")]
         public string? OutputFolder { get; set; }
-
-        [Option('a', "ActivationBytes", Required = false,
-            HelpText =
-                "Activation bytes for decoding your AAX File. See https://github.com/inAudible-NG/tables for details of how to obtain")]
-        public string? ActivationBytes { get; set; }
 
         [Option('f', "FetchFFMpeg", Required = false,
             HelpText = "Just download versions of ffmpeg and ffprobe locally and exit")]

@@ -303,54 +303,6 @@ public class ProgramTests
 
     #endregion
 
-    #region Options Property Tests - ActivationBytes
-
-    [Fact]
-    public async Task Options_ActivationBytes_ShouldBeNullableString()
-    {
-        // Arrange
-        var options = new Program.Options();
-
-        // Act & Assert
-        options.ActivationBytes.Should().BeNull();
-        options.ActivationBytes = "abcd1234";
-        options.ActivationBytes.Should().Be("abcd1234");
-        await Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task Options_ActivationBytes_ShouldHaveCorrectShortName()
-    {
-        // Arrange
-        var optionAttribute = typeof(Program.Options)
-            .GetProperty(nameof(Program.Options.ActivationBytes))?
-            .GetCustomAttributes(typeof(OptionAttribute), false)
-            .FirstOrDefault() as OptionAttribute;
-
-        // Act & Assert
-        optionAttribute.Should().NotBeNull();
-        optionAttribute!.ShortName.Should().Be("a", "ActivationBytes short name should be 'a'");
-        optionAttribute.LongName.Should().Be("ActivationBytes");
-        await Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task Options_ActivationBytes_HelpText_ShouldReferenceGitHub()
-    {
-        // Arrange
-        var optionAttribute = typeof(Program.Options)
-            .GetProperty(nameof(Program.Options.ActivationBytes))?
-            .GetCustomAttributes(typeof(OptionAttribute), false)
-            .FirstOrDefault() as OptionAttribute;
-
-        // Act & Assert
-        optionAttribute.Should().NotBeNull();
-        optionAttribute!.HelpText.Should().Contain("github.com", "Help text should reference the lookup tables repository");
-        await Task.CompletedTask;
-    }
-
-    #endregion
-
     #region Options Property Tests - FetchFFMpeg
 
     [Fact]

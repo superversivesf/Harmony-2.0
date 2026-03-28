@@ -41,7 +41,6 @@ publish() {
         -r "$runtime" \
         -c "$CONFIG" \
         -p:PublishSingleFile=true \
-        -p:PublishTrimmed=true \
         -o "$OUTPUT_DIR/$runtime"
     
     if [ $? -eq 0 ]; then
