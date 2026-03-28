@@ -18,3 +18,18 @@ GEMINI.md
 COPILOT.md
 *.backup
 .hive/
+
+# Build/Output Directories
+output/
+publish/
+
+# Log Files
+*.log
+
+# FFmpeg Binaries
+ffmpeg
+ffprobe
+
+# Test Scripts
+test_*.sh
+debug_*.sh
