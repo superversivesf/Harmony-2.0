@@ -320,8 +320,98 @@ public class AudiobookConverterBaseTests : IDisposable
         var result = converter.ProcessTitleForComparisonPublic("Book's Title: A Novel? Part 2!");
 
         // Assert
-        result.Should().Be("bookstitlenovelapart2", 
+        result.Should().Be("bookstitleanovelpart2",
             "ProcessTitleForComparison should remove all non-alphanumeric characters");
+    }
+
+    #endregion
+
+    #region GetExistingFileAction - Source Newer Than Output
+
+    [Fact]
+    public void GetExistingFileAction_WhenClobberEnabled_ShouldReturnClobber()
+    {
+        var converter = new TestableAudiobookConverter(clobber: true);
+        var sourceFile = Path.Combine(_testDirectory, "source.aaxc");
+        var m4bFile = Path.Combine(_testDirectory, "output.m4b");
+
+        File.WriteAllText(sourceFile, "source");
+        File.WriteAllText(m4bFile, "output");
+        File.SetLastWriteTimeUtc(sourceFile, DateTime.UtcNow.AddHours(-1));
+        File.SetLastWriteTimeUtc(m4bFile, DateTime.UtcNow);
+
+        var result = converter.GetExistingFileActionPublic(m4bFile, sourceFile);
+
+        result.Should().Be(ExistingFileAction.Clobber, "Clobber should always return Clobber regardless of timestamps");
+    }
+
+    [Fact]
+    public void GetExistingFileAction_WhenM4BIsNewer_ShouldReturnSkip()
+    {
+        var converter = new TestableAudiobookConverter(clobber: false);
+        var sourceFile = Path.Combine(_testDirectory, "source.aaxc");
+        var m4bFile = Path.Combine(_testDirectory, "output.m4b");
+
+        File.WriteAllText(sourceFile, "source");
+        File.WriteAllText(m4bFile, "output");
+        File.SetLastWriteTimeUtc(sourceFile, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(m4bFile, DateTime.UtcNow.AddHours(-1));
+
+        var result = converter.GetExistingFileActionPublic(m4bFile, sourceFile);
+
+        result.Should().Be(ExistingFileAction.Skip, "M4B newer than source should skip");
+    }
+
+    [Fact]
+    public void GetExistingFileAction_WhenM4BIsSameAge_ShouldReturnSkip()
+    {
+        var converter = new TestableAudiobookConverter(clobber: false);
+        var sourceFile = Path.Combine(_testDirectory, "source.aaxc");
+        var m4bFile = Path.Combine(_testDirectory, "output.m4b");
+
+        var timestamp = DateTime.UtcNow;
+        File.WriteAllText(sourceFile, "source");
+        File.WriteAllText(m4bFile, "output");
+        File.SetLastWriteTimeUtc(sourceFile, timestamp);
+        File.SetLastWriteTimeUtc(m4bFile, timestamp);
+
+        var result = converter.GetExistingFileActionPublic(m4bFile, sourceFile);
+
+        result.Should().Be(ExistingFileAction.Skip, "M4B same age as source should skip");
+    }
+
+    [Fact]
+    public void GetExistingFileAction_WhenSourceIsNewer_ShouldReturnReconvert()
+    {
+        var converter = new TestableAudiobookConverter(clobber: false);
+        var sourceFile = Path.Combine(_testDirectory, "source.aaxc");
+        var m4bFile = Path.Combine(_testDirectory, "output.m4b");
+
+        File.WriteAllText(sourceFile, "source");
+        File.WriteAllText(m4bFile, "output");
+        File.SetLastWriteTimeUtc(m4bFile, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(sourceFile, DateTime.UtcNow.AddHours(-1));
+
+        var result = converter.GetExistingFileActionPublic(m4bFile, sourceFile);
+
+        result.Should().Be(ExistingFileAction.Reconvert, "Source newer than M4B should reconvert");
+    }
+
+    [Fact]
+    public void GetExistingFileAction_ClobberOverridesNewerSource()
+    {
+        var converter = new TestableAudiobookConverter(clobber: true);
+        var sourceFile = Path.Combine(_testDirectory, "source.aaxc");
+        var m4bFile = Path.Combine(_testDirectory, "output.m4b");
+
+        File.WriteAllText(sourceFile, "source");
+        File.WriteAllText(m4bFile, "output");
+        File.SetLastWriteTimeUtc(m4bFile, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(sourceFile, DateTime.UtcNow.AddHours(-1));
+
+        var result = converter.GetExistingFileActionPublic(m4bFile, sourceFile);
+
+        result.Should().Be(ExistingFileAction.Clobber, "Clobber flag should override timestamp check");
     }
 
     #endregion
@@ -338,6 +428,11 @@ public class AudiobookConverterBaseTests : IDisposable
         {
         }
 
+        public TestableAudiobookConverter(bool clobber) 
+            : base(bitrate: 64, quietMode: true, inputFolder: "/tmp", outputFolder: "/tmp", clobber: clobber)
+        {
+        }
+
         protected override string FileExtensionPattern => "*.test";
 
         protected override IEnumerable<string> GetAuthenticationParameters() => Array.Empty<string>();
@@ -348,6 +443,8 @@ public class AudiobookConverterBaseTests : IDisposable
         public string CleanAuthorPublic(string? name) => CleanAuthor(name);
         public string? CleanTitlePublic(string? title) => CleanTitle(title);
         public string ProcessTitleForComparisonPublic(string? input) => ProcessTitleForComparison(input);
+        public ExistingFileAction GetExistingFileActionPublic(string existingM4BPath, string sourceFilePath) 
+            => GetExistingFileAction(existingM4BPath, sourceFilePath);
     }
 
     #endregion

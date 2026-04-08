@@ -12,6 +12,13 @@ using SearchOption = System.IO.SearchOption;
 
 namespace Harmony;
 
+internal enum ExistingFileAction
+{
+    Skip,
+    Reconvert,
+    Clobber
+}
+
 /// <summary>
 /// Abstract base class for audiobook converters. Provides shared functionality for
 /// converting AAX/AAXC files to M4B format while allowing subclasses to specify
@@ -284,15 +291,20 @@ internal abstract class AudiobookConverterBase
         // Handle existing M4B file
         if (File.Exists(m4BFilePath))
         {
-            if (_clobber)
+            var action = GetExistingFileAction(m4BFilePath, filePath);
+            switch (action)
             {
-                logger.WriteLine("\nFile Already Exists ... Deleting");
-                File.Delete(m4BFilePath);
-            }
-            else
-            {
-                logger.WriteLine("\nFile Already Exists ... Skipping");
-                return null;
+                case ExistingFileAction.Skip:
+                    logger.WriteLine("\nFile Already Exists ... Skipping");
+                    return null;
+                case ExistingFileAction.Reconvert:
+                    logger.WriteLine("\nSource file newer than output ... Re-converting");
+                    File.Delete(m4BFilePath);
+                    break;
+                case ExistingFileAction.Clobber:
+                    logger.WriteLine("\nFile Already Exists ... Deleting");
+                    File.Delete(m4BFilePath);
+                    break;
             }
         }
         
@@ -529,7 +541,7 @@ internal abstract class AudiobookConverterBase
         logger.WriteLine("Done");
     }
 
-    private string ProcessTitleForComparison(string input)
+    protected string ProcessTitleForComparison(string? input)
     {
         if (input is null)
             return string.Empty;
@@ -557,5 +569,22 @@ internal abstract class AudiobookConverterBase
     {
         if (!Directory.Exists(_inputFolder)) throw new Exception($"Input folder does not exist: {_inputFolder}");
         if (!Directory.Exists(_outputFolder)) throw new Exception($"Output folder does not exist: {_outputFolder}");
+    }
+
+    /// <summary>
+    /// Determines what action to take when an output M4B file already exists.
+    /// </summary>
+    /// <param name="existingM4BPath">Path to the existing M4B file.</param>
+    /// <param name="sourceFilePath">Path to the source AAX/AAXC file.</param>
+    /// <returns>The action to take: Skip, Reconvert, or Clobber.</returns>
+    protected ExistingFileAction GetExistingFileAction(string existingM4BPath, string sourceFilePath)
+    {
+        if (_clobber)
+            return ExistingFileAction.Clobber;
+
+        if (File.GetLastWriteTimeUtc(existingM4BPath) >= File.GetLastWriteTimeUtc(sourceFilePath))
+            return ExistingFileAction.Skip;
+
+        return ExistingFileAction.Reconvert;
     }
 }
