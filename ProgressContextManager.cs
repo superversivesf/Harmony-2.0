@@ -183,7 +183,7 @@ internal class ProgressContextManager : IDisposable
 
         lock (_progressTaskLock)
         {
-            if (_progressTask != null)
+            if (_progressTask is not null)
             {
                 _progressTask.Value = _totalFiles;
                 _progressTask.Description($"[[{_totalFiles}/{_totalFiles}]]");

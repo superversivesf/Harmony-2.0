@@ -139,47 +139,7 @@ public class ProgramTests
 
     #endregion
 
-    #region LoopMode Tests
 
-    [Fact]
-    public async Task LoopMode_ShouldDefaultToFalse()
-    {
-        // Arrange
-        var options = new Program.Options();
-
-        // Act & Assert
-        options.LoopMode.Should().BeFalse("LoopMode should default to false");
-        await Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task LoopMode_ShouldBeSettable()
-    {
-        // Arrange
-        var options = new Program.Options { LoopMode = true };
-
-        // Act & Assert
-        options.LoopMode.Should().BeTrue();
-        await Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task LoopModeOption_ShouldHaveCorrectHelpDescribingFiveMinutes()
-    {
-        // Arrange
-        var optionAttribute = typeof(Program.Options)
-            .GetProperty(nameof(Program.Options.LoopMode))?
-            .GetCustomAttributes(typeof(OptionAttribute), false)
-            .FirstOrDefault() as OptionAttribute;
-
-        // Act & Assert
-        optionAttribute.Should().NotBeNull();
-        optionAttribute!.HelpText.Should().Contain("5 minute",
-            "Help text should indicate 5 minute sleep interval as per the bug fix");
-        await Task.CompletedTask;
-    }
-
-    #endregion
 
     [Fact]
     public async Task Options_ShouldHaveDefaultQuietModeFalse()

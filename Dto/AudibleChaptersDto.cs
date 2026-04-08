@@ -115,7 +115,7 @@ public class AudibleChaptersDto
         {
             flattenedChapters.Add(chapter);
 
-            if (chapter.chapters != null && chapter.chapters.Count > 0)
+            if (chapter.chapters is not null && chapter.chapters.Count > 0)
             {
                 FlattenChaptersRecursive(chapter.chapters, flattenedChapters);
             }

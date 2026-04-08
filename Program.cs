@@ -76,7 +76,6 @@ internal static class Program
         var outputFolder = options.OutputFolder;
         var quietMode = options.QuietMode;
         var logger = new Logger(quietMode);
-        var loopMode = options.LoopMode;
 
         logger.WriteLine(
             $"Harmony {Assembly.GetExecutingAssembly().GetName().Version}\nCopyright(C) 2023 Harmony\n");
@@ -87,88 +86,77 @@ internal static class Program
             return;
         }
 
-        do
+        await FetchFFmpegAsync(logger).ConfigureAwait(false);
+
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
-            await FetchFFmpegAsync(logger).ConfigureAwait(false);
-
-            var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+            Delimiter = "\t"
+        };
+        var libraryFile = Path.Combine(inputFolder!, "library.tsv");
+        List<AudibleLibraryDto>? library = null;
+        if (File.Exists(libraryFile))
+        {
+            using (var reader = new StreamReader(libraryFile))
+            using (var csv = new CsvReader(reader, config))
             {
-                Delimiter = "\t"
-            };
-            var libraryFile = Path.Combine(inputFolder!, "library.tsv");
-            List<AudibleLibraryDto>? library = null;
-            if (File.Exists(libraryFile))
-            {
-                using (var reader = new StreamReader(libraryFile))
-                using (var csv = new CsvReader(reader, config))
-                {
-                    library = csv.GetRecords<AudibleLibraryDto>().ToList();
-                }
+                library = csv.GetRecords<AudibleLibraryDto>().ToList();
             }
+        }
 
-            // Check for AAX files and warn user (AAX is deprecated)
-            var aaxFiles = Directory.GetFiles(inputFolder!, "*.aax", SearchOption.AllDirectories);
-            if (aaxFiles.Length > 0)
+        // Check for AAX files and warn user (AAX is deprecated)
+        var aaxFiles = Directory.GetFiles(inputFolder!, "*.aax", SearchOption.AllDirectories);
+        if (aaxFiles.Length > 0)
+        {
+            logger.WriteLine("WARNING: AAX files are no longer supported.");
+            logger.WriteLine($"Found {aaxFiles.Length} AAX file(s). Please use AAXC files instead.");
+            logger.WriteLine("AAX files require activation bytes which are no longer supported in this version.");
+            return;
+        }
+
+        // Count total AAXC files before starting progress display
+        var aaxcFiles = Directory.GetFiles(inputFolder!, "*.aaxc", SearchOption.AllDirectories);
+        var totalFiles = aaxcFiles.Length;
+
+        if (totalFiles == 0)
+        {
+            logger.WriteLine("No AAXC files found to process.");
+            return;
+        }
+
+        // Setup CancellationTokenSource for graceful shutdown on Ctrl+C
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (sender, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+            logger.WriteLine("\nCancellation requested. Finishing current file...");
+        };
+
+        // Create ProgressContextManager with total file count
+        using var progressManager = new ProgressContextManager(totalFiles, cts.Token);
+
+        try
+        {
+            // Wrap conversion execution in ProgressContextManager.RunAsync
+            await progressManager.RunAsync(async ctx =>
             {
-                logger.WriteLine("WARNING: AAX files are no longer supported.");
-                logger.WriteLine($"Found {aaxFiles.Length} AAX file(s). Please use AAXC files instead.");
-                logger.WriteLine("AAX files require activation bytes which are no longer supported in this version.");
-                return;
-            }
-
-            // Count total AAXC files before starting progress display
-            var aaxcFiles = Directory.GetFiles(inputFolder!, "*.aaxc", SearchOption.AllDirectories);
-            var totalFiles = aaxcFiles.Length;
-
-            if (totalFiles == 0)
-            {
-                logger.WriteLine("No AAXC files found to process.");
-                return;
-            }
-
-            // Setup CancellationTokenSource for graceful shutdown on Ctrl+C
-            using var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                e.Cancel = true;
-                cts.Cancel();
-                logger.WriteLine("\nCancellation requested. Finishing current file...");
-            };
-
-            // Create ProgressContextManager with total file count
-            using var progressManager = new ProgressContextManager(totalFiles, cts.Token);
-
-            try
-            {
-                // Wrap conversion execution in ProgressContextManager.RunAsync
-                await progressManager.RunAsync(async ctx =>
-                {
-                    // Create AAXC converter with progress manager and execute
-                    var aaxcConvertor = new AaxcToM4BConvertor(
-                        bitrate,
-                        quietMode,
-                        inputFolder!,
-                        outputFolder!,
-                        clobber,
-                        library,
-                        ctx
-                    );
-                    await aaxcConvertor.ExecuteAsync().ConfigureAwait(false);
-                }).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                logger.WriteLine("Operation cancelled by user.");
-            }
-
-            if (loopMode)
-            {
-                logger.WriteLine("Run complete, sleeping for 5 minutes");
-                await Task.Delay(TimeSpan.FromMinutes(5)).ConfigureAwait(false);
-            }
-
-            // ReSharper disable once LoopVariableIsNeverChangedInsideLoop
-        } while (loopMode);
+                // Create AAXC converter with progress manager and execute
+                var aaxcConvertor = new AaxcToM4BConvertor(
+                    bitrate,
+                    quietMode,
+                    inputFolder!,
+                    outputFolder!,
+                    clobber,
+                    library,
+                    ctx
+                );
+                await aaxcConvertor.ExecuteAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.WriteLine("Operation cancelled by user.");
+        }
     }
 
     // ReSharper disable once ClassNeverInstantiated.Global
@@ -195,11 +183,5 @@ internal static class Program
 
         [Option('q', "QuietMode", Required = false, HelpText = "Disable all output", Default = false)]
         public bool QuietMode { get; set; }
-
-        [Option('l', "LoopMode", Required = false,
-            HelpText =
-                "Have the program run to completion then check and run again with a 5 minute sleep between each run",
-            Default = false)]
-        public bool LoopMode { get; set; }
     }
 }

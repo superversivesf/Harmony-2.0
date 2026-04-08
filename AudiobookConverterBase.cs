@@ -75,7 +75,7 @@ internal abstract class AudiobookConverterBase
         if (_progressManager?.IsCancelled == true)
             throw new OperationCanceledException();
 
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
         logger.WriteLine("\bDone");
 
         logger.Write("Checking folders and purging working files ... ");
@@ -101,7 +101,7 @@ internal abstract class AudiobookConverterBase
         if (_progressManager?.IsCancelled == true)
             throw new OperationCanceledException();
 
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
 
         if (!logger.IsTuiMode)
             logger.WriteLine($"Processing {Path.GetFileName(filePath)} ...");
@@ -218,7 +218,7 @@ internal abstract class AudiobookConverterBase
 
     private async Task<string> FallbackProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
     {
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
 
         logger.Write("Converting to WAV ...      ");
 
@@ -272,7 +272,7 @@ internal abstract class AudiobookConverterBase
 
     private async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
     {
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
         logger.Write("Converting to M4A...      ");
 
         var title = CleanTitle(aaxInfo.format?.tags?.title);
@@ -340,7 +340,7 @@ internal abstract class AudiobookConverterBase
             .AddParameter("-codec:a")
             .AddParameter("copy")
             .AddParameter("-b:a")
-            .AddParameter("64k")
+            .AddParameter(DefaultAacBitrate)
             .SetOutput($"\"{outputFile}\"");
 
         await conversion.Start().ConfigureAwait(false);
@@ -352,7 +352,7 @@ internal abstract class AudiobookConverterBase
 
     private async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
     {
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
         logger.Write("Extracting cover art... ");
 
         var directory = Path.GetDirectoryName(filePath);
@@ -405,7 +405,7 @@ internal abstract class AudiobookConverterBase
         if (_progressManager?.IsCancelled == true)
             throw new OperationCanceledException();
 
-        var logger = new Logger(_quietMode, _progressManager != null);
+        var logger = new Logger(_quietMode, _progressManager is not null);
         logger.Write("Adding metadata to M4A... ");
 
         using (var file = TagLib.File.Create(filePath))
