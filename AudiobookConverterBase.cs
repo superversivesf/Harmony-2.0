@@ -43,10 +43,11 @@ internal abstract class AudiobookConverterBase
     private List<AudibleLibraryDto>? _library;
     private readonly bool _clobber;
     private readonly ProgressContextManager? _progressManager;
+    private readonly IReadOnlySet<string>? _skipFiles;
 
     protected AudiobookConverterBase(int bitrate, bool quietMode, string inputFolder,
         string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null,
-        ProgressContextManager? progressManager = null)
+        ProgressContextManager? progressManager = null, IReadOnlySet<string>? skipFiles = null)
     {
         _clobber = clobber;
         _bitrate = bitrate;
@@ -55,6 +56,7 @@ internal abstract class AudiobookConverterBase
         _outputFolder = outputFolder;
         _library = library;
         _progressManager = progressManager;
+        _skipFiles = skipFiles;
     }
 
     /// <summary>
@@ -95,9 +97,23 @@ internal abstract class AudiobookConverterBase
         {
             if (_progressManager?.IsCancelled == true)
                 throw new OperationCanceledException();
+            if (_skipFiles?.Contains(filePath) == true)
+                continue;
             _progressManager?.StartNewFile(Path.GetFileName(filePath));
 
-            await ProcessFileAsync(filePath).ConfigureAwait(false);
+            try
+            {
+                await ProcessFileAsync(filePath).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.WriteLine(
+                    $"Error processing {Path.GetFileName(filePath)}: {ex.Message}. Moving to next file.");
+            }
 
             _progressManager?.CompleteFile();
         }
@@ -234,13 +250,13 @@ internal abstract class AudiobookConverterBase
         var outputFile = Path.Combine(outputDirectory, filename + ".wav");
         var authParams = GetAuthenticationParameters();
         var conversion = FFmpeg.Conversions.New();
-        
+
         // Add authentication parameters safely - each parameter is added individually
         foreach (var param in authParams)
         {
             conversion.AddParameter(param);
         }
-        
+
         conversion
             .AddParameter("-i")
             .AddParameter($"\"{filePath}\"")
@@ -307,7 +323,7 @@ internal abstract class AudiobookConverterBase
                     break;
             }
         }
-        
+
         // Clean up intermediate file if it exists
         if (File.Exists(outputFile))
         {
@@ -320,7 +336,7 @@ internal abstract class AudiobookConverterBase
                 logger.WriteLine($"\nWarning: Could not delete intermediate file {outputFile}: {ex.Message}");
             }
         }
-        
+
         // Clean up intermediate file if it exists
         if (File.Exists(outputFile))
         {
@@ -336,13 +352,13 @@ internal abstract class AudiobookConverterBase
 
         var authParams = GetAuthenticationParameters();
         var conversion = FFmpeg.Conversions.New();
-        
+
         // Add authentication parameters safely - each parameter is added individually
         foreach (var param in authParams)
         {
             conversion.AddParameter(param);
         }
-        
+
         conversion
             .AddParameter("-i")
             .AddParameter($"\"{filePath}\"")
@@ -391,13 +407,13 @@ internal abstract class AudiobookConverterBase
 
         var authParams = GetAuthenticationParameters();
         var conversion = FFmpeg.Conversions.New();
-        
+
         // Add authentication parameters safely - each parameter is added individually
         foreach (var param in authParams)
         {
             conversion.AddParameter(param);
         }
-        
+
         conversion
             .AddParameter("-i")
             .AddParameter($"\"{filePath}\"")
@@ -434,15 +450,15 @@ internal abstract class AudiobookConverterBase
                         group => group.ToList()
                     );
 
-                    var title = aaxInfo?.format?.tags?.title;
-                    if (title is not null)
-                    {
-                        var regex = new Regex("Part [0-9]");
-                        var boxset = regex.Match(title).Success;
-                        var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
-                        titleString = Regex.Replace(titleString, @"\(Unabridged\)", "").Trim();
+                var title = aaxInfo?.format?.tags?.title;
+                if (title is not null)
+                {
+                    var regex = new Regex("Part [0-9]");
+                    var boxset = regex.Match(title).Success;
+                    var titleString = boxset ? Regex.Replace(title, @"\bPart [1-9]\b", "").Trim() : title;
+                    titleString = Regex.Replace(titleString, @"\(Unabridged\)", "").Trim();
 
-                        string processedTitleString = ProcessTitleForComparison(titleString);
+                    string processedTitleString = ProcessTitleForComparison(titleString);
 
                     lookupTable.TryGetValue(processedTitleString, out var dataList);
 
@@ -563,6 +579,39 @@ internal abstract class AudiobookConverterBase
         if (authors.Length > MaxAuthorCountForIndividualDisplay) return "Various";
 
         return name.Replace("Jr.", "Jr").Trim();
+    }
+
+    /// Locates ffprobe: prefers the copy downloaded into the working directory (via
+    /// --fetch-ffmpeg or the first run) and falls back to PATH lookup.
+    /// </summary>
+    internal static string ResolveFFprobePath(string? directory = null)
+    {
+        var searchDirectory = directory ?? Directory.GetCurrentDirectory();
+        var fileName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
+        var localBinary = Path.Combine(searchDirectory, fileName);
+        return File.Exists(localBinary) ? localBinary : fileName;
+    }
+
+    /// <summary>
+    /// Deserializes ffprobe JSON output. Empty, whitespace, or malformed output returns
+    /// null so a probe failure skips the file instead of aborting the run.
+    /// </summary>
+    internal static AaxInfoDto? ParseProbeOutput(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<AaxInfoDto>(output, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     protected void CheckFolders()

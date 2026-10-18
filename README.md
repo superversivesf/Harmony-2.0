@@ -1,16 +1,17 @@
 # Harmony
 
-A modern AAXC to M4B converter for audiobooks. Harmony converts Audible AAXC files to standard M4B format with embedded metadata, chapters, and cover art—compatible with Audiobookshelf and other audiobook players.
+A modern AAX/AAXC to M4B converter for audiobooks. Harmony converts Audible AAX and AAXC files to standard M4B format with embedded metadata, chapters, and cover art—compatible with Audiobookshelf and other audiobook players.
 
 ## Overview
 
-Harmony is a .NET 10.0 console application that processes Audible AAXC audiobook files and converts them to M4B format. It preserves metadata (title, author), embeds chapters, and includes cover art. The output is fully compatible with Audiobookshelf, Plex, and other media servers.
+Harmony is a .NET 10.0 console application that processes Audible AAX and AAXC audiobook files and converts them to M4B format. It preserves metadata (title, author), embeds chapters, and includes cover art. The output is fully compatible with Audiobookshelf, Plex, and other media servers.
 
-**Note:** This version (2.0+) supports **AAXC files only**. Legacy AAX file support has been removed.
+**Note:** AAX files require activation bytes (pass them with `-a`). If a book exists as both AAX and AAXC, the newer file is converted and the older one is skipped.
 
 ## Features
 
-- Convert AAXC audiobooks to M4B format
+- Convert AAX and AAXC audiobooks to M4B format
+- Convert whichever source file is newer when a book exists in both formats
 - Preserve embedded metadata (title, author, narrator)
 - Embed chapters from optional chapters.json
 - Embed cover art from voucher files
@@ -63,8 +64,9 @@ For each audiobook, you need:
 
 | File Type | Required | Description |
 |-----------|----------|-------------|
-| `.aaxc` | Yes | The encrypted audiobook file from Audible |
-| `.voucher` | Yes | DRM license file (must match audiobook name) |
+| `.aaxc` | With matching voucher, yes | The encrypted audiobook file from Audible |
+| `.voucher` | For AAXC, yes | DRM license file (must match audiobook name) |
+| `.aax` | With activation bytes, yes | Legacy encrypted audiobook file — needs `-a` |
 | `library.tsv` | Optional | Library metadata for better title/author info |
 | `-chapters.json` | Optional | Chapter metadata (e.g., `Title-chapters.json`) |
 
@@ -89,12 +91,12 @@ Harmony [options]
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--input` | `-i` | Input folder containing AAXC files | |
+| `--input` | `-i` | Input folder containing AAX/AAXC files | |
 | `--output` | `-o` | Output folder for M4B files | |
 | `--bitrate` | `-b` | Output bitrate in kilobits | 64 |
+| `--activation-bytes` | `-a` | Activation bytes for decoding AAX files | |
 | `--clobber` | `-c` | Overwrite existing output files | false |
 | `--quiet` | `-q` | Disable all console output | false |
-| `--loop` | `-l` | Run continuously with 5-min intervals | false |
 | `--fetch-ffmpeg` | `-f` | Download FFmpeg and exit | |
 
 ### Examples
@@ -112,12 +114,20 @@ Harmony -i ./input -o ./output --clobber
 # Quiet mode (no output)
 Harmony -i ./input -o ./output --quiet
 
-# Continuous monitoring mode
-Harmony -i ./input -o ./output --loop
+# Convert legacy AAX files (activation bytes required)
+Harmony -i ./input -o ./output -a your_activation_bytes
 
 # Just download FFmpeg
 Harmony --fetch-ffmpeg
 ```
+
+### AAX and AAXC Together
+
+When your input folder contains both formats:
+
+- Books present in both formats convert **only the newer file**. Files pair by filename stem (`Book.aax` pairs with `Book.aaxc`); modification time decides the winner, and a tie favors AAXC.
+- When the AAX file wins but no activation bytes were supplied, the paired AAXC is converted instead so the book is never lost.
+- AAX files without activation bytes and without an AAXC copy are skipped with a warning; the run continues.
 
 ## Building
 
@@ -229,13 +239,9 @@ dotnet test --filter "FullyQualifiedName~TestClassName"
 
 Copyright © 2023 Jason Rennie
 
-## Migration from AAX
+## AAX Support
 
-If you have existing AAX files from older versions:
-
-1. **AAX files are no longer supported** in Harmony 2.0+
-2. Re-download your audiobooks using [audible-cli](https://github.com/mkb79/audible-cli) to get AAXC + voucher files
-3. AAXC files provide better metadata and don't require activation bytes
+AAX files use the classic activation-bytes DRM and are supported again in Harmony 2.x. To obtain your activation bytes, see [inAudible-NG/tables](https://github.com/inAudible-NG/tables) or run `audible activation-bytes` with [audible-cli](https://github.com/mkb79/audible-cli), then pass them with `-a`/`--activation-bytes`.
 
 ## Troubleshooting
 
@@ -243,9 +249,9 @@ If you have existing AAX files from older versions:
 
 | Issue | Solution |
 |-------|----------|
-| "No AAXC files found" | Ensure files have `.aaxc` extension |
+| "No AAX or AAXC files found" | Ensure files have `.aax` or `.aaxc` extension |
 | "Missing voucher file" | Each `.aaxc` requires a matching `.voucher` file |
-| "AAX files detected" | AAX is deprecated - use audible-cli to download AAXC files |
+| "AAX files... will be skipped" | Pass your activation bytes with `-a` (see AAX Support) |
 | FFmpeg not found | Run with `--fetch-ffmpeg` or install FFmpeg in PATH |
 
 ### Verbose Output

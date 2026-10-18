@@ -940,7 +940,7 @@ public class AAXtoM4BConvertorTests
         {
             chapters.Add(new AaxChapter());
         }
-        
+
         return new AaxInfoDto
         {
             format = new AaxFormat

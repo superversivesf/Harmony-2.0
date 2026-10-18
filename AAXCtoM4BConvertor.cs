@@ -1,9 +1,7 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Newtonsoft.Json;
 using Harmony.Dto;
 using File = System.IO.File;
-using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Harmony;
 
@@ -27,8 +25,8 @@ internal class AaxcToM4BConvertor : AudiobookConverterBase
 
     public AaxcToM4BConvertor(int bitrate, bool quietMode, string inputFolder,
         string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null,
-        ProgressContextManager? progressManager = null)
-        : base(bitrate, quietMode, inputFolder, outputFolder, clobber, library, progressManager)
+        ProgressContextManager? progressManager = null, IReadOnlySet<string>? skipFiles = null)
+        : base(bitrate, quietMode, inputFolder, outputFolder, clobber, library, progressManager, skipFiles)
     {
     }
 
@@ -52,7 +50,7 @@ internal class AaxcToM4BConvertor : AudiobookConverterBase
     private bool LoadVoucher(string filePath)
     {
         var voucherFile = Path.ChangeExtension(filePath, "voucher");
-        
+
         if (!File.Exists(voucherFile))
         {
             return false;
@@ -89,7 +87,7 @@ internal class AaxcToM4BConvertor : AudiobookConverterBase
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "ffprobe",
+                FileName = ResolveFFprobePath(),
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -113,10 +111,7 @@ internal class AaxcToM4BConvertor : AudiobookConverterBase
 
         logger.WriteLine("Done");
 
-        return JsonSerializer.Deserialize<AaxInfoDto>(output, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        return ParseProbeOutput(output);
     }
 
     /// <summary>

@@ -263,6 +263,189 @@ public class ProgramTests
 
     #endregion
 
+    #region Options Property Tests - ActivationBytes
+
+    [Fact]
+    public async Task Options_ActivationBytes_ShouldBeNullableString()
+    {
+        // Arrange
+        var options = new Program.Options();
+
+        // Act & Assert
+        options.ActivationBytes.Should().BeNull("ActivationBytes should be optional");
+        options.ActivationBytes = "cafebabe";
+        options.ActivationBytes.Should().Be("cafebabe");
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Options_ActivationBytes_ShouldHaveCorrectShortName()
+    {
+        // Arrange
+        var optionAttribute = typeof(Program.Options)
+            .GetProperty(nameof(Program.Options.ActivationBytes))?
+            .GetCustomAttributes(typeof(OptionAttribute), false)
+            .FirstOrDefault() as OptionAttribute;
+
+        // Act & Assert
+        optionAttribute.Should().NotBeNull();
+        optionAttribute!.ShortName.Should().Be("a", "ActivationBytes short name should be 'a'");
+        optionAttribute.LongName.Should().Be("ActivationBytes");
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task ParseArguments_WithActivationBytesOption_ShouldBindValue()
+    {
+        // Arrange
+        var args = new[] { "-a", "deadbeef", "-i", "in", "-o", "out" };
+
+        // Act
+        var result = Parser.Default.ParseArguments<Program.Options>(args);
+
+        // Assert
+        result.Tag.Should().Be(ParserResultType.Parsed, "-a should be a recognized argument");
+        var options = ((Parsed<Program.Options>)result).Value;
+        options.ActivationBytes.Should().Be("deadbeef", "-a should bind to ActivationBytes");
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region Conversion Plan Tests
+
+    [Fact]
+    public async Task BuildConversionPlan_WithPairedStems_WhenAaxIsNewer_ShouldConvertAaxOnly()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        try
+        {
+            var aax = CreateTestFile(folder, "Book.aax", daysAgo: 1);
+            CreateTestFile(folder, "Book.aaxc", daysAgo: 5);
+
+            // Act
+            var plan = Program.BuildConversionPlan(new[] { aax }, new[] { Path.ChangeExtension(aax, ".aaxc") }, "deadbeef");
+
+            // Assert
+            plan.AaxFilesToConvert.Should().ContainSingle(f => f == aax);
+            plan.AaxcFilesToConvert.Should().BeEmpty();
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WithPairedStems_WhenAaxcIsNewer_ShouldConvertAaxcOnly()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var aax = CreateTestFile(folder, "Book.aax", daysAgo: 5);
+        var aaxc = CreateTestFile(folder, "Book.aaxc", daysAgo: 1);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, new[] { aaxc }, "deadbeef");
+
+        // Assert
+        plan.AaxFilesToConvert.Should().BeEmpty();
+        plan.AaxcFilesToConvert.Should().ContainSingle(f => f == aaxc);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WithTiedMtimes_ShouldPreferAaxc()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var mtime = DateTime.UtcNow.AddDays(-3);
+        var aax = CreateTestFile(folder, "Book.aax", utcTime: mtime);
+        var aaxc = CreateTestFile(folder, "Book.aaxc", utcTime: mtime);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, new[] { aaxc }, "deadbeef");
+
+        // Assert
+        plan.AaxFilesToConvert.Should().BeEmpty("a tie should favor the format that never needs activation bytes");
+        plan.AaxcFilesToConvert.Should().ContainSingle(f => f == aaxc);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WhenNewerAaxLacksActivationBytes_ShouldFallBackToAaxc()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var aax = CreateTestFile(folder, "Book.aax", daysAgo: 1);
+        var aaxc = CreateTestFile(folder, "Book.aaxc", daysAgo: 5);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, new[] { aaxc }, null);
+
+        // Assert
+        plan.AaxFilesToConvert.Should().BeEmpty();
+        plan.AaxcFilesToConvert.Should().ContainSingle(f => f == aaxc,
+            "the AAXC should still convert rather than lose the book entirely");
+        plan.WarnMissingActivationBytes.Should().BeFalse("the book is still converted via its AAXC copy");
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WithPairedStems_WhenAaxcIsNewer_ShouldListAaxAsSkippedByAaxc()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var aax = CreateTestFile(folder, "Book.aax", daysAgo: 5);
+        var aaxc = CreateTestFile(folder, "Book.aaxc", daysAgo: 1);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, new[] { aaxc }, "deadbeef");
+
+        // Assert
+        plan.AaxFilesSkippedByNewerAaxc.Should().ContainSingle(f => f == aax,
+            "the user should be told the AAX file lost to a newer AAXC");
+        plan.AaxcFilesSkippedByNewerAax.Should().BeEmpty();
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WithUnpairedFiles_ShouldConvertBoth()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var aax = CreateTestFile(folder, "BookOne.aax", daysAgo: 1);
+        var aaxc = CreateTestFile(folder, "BookTwo.aaxc", daysAgo: 1);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, new[] { aaxc }, "deadbeef");
+
+        // Assert
+        plan.AaxFilesToConvert.Should().ContainSingle(f => f == aax);
+        plan.AaxcFilesToConvert.Should().ContainSingle(f => f == aaxc);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task BuildConversionPlan_WithAaxOnlyAndNoActivationBytes_ShouldWarnAndConvertNothing()
+    {
+        // Arrange
+        var folder = CreateTestDirectory();
+        var aax = CreateTestFile(folder, "Book.aax", daysAgo: 1);
+
+        // Act
+        var plan = Program.BuildConversionPlan(new[] { aax }, Array.Empty<string>(), null);
+
+        // Assert
+        plan.AaxFilesToConvert.Should().BeEmpty();
+        plan.AaxcFilesToConvert.Should().BeEmpty();
+        plan.WarnMissingActivationBytes.Should().BeTrue("the user should know their AAX files are being skipped");
+        await Task.CompletedTask;
+    }
+
+    #endregion
+
     #region Options Property Tests - FetchFFMpeg
 
     [Fact]
@@ -508,6 +691,23 @@ public class ProgramTests
         // Assert
         version.Should().NotBeNull();
         await Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region Test Helpers
+
+    private static string CreateTestDirectory()
+    {
+        return Directory.CreateTempSubdirectory("HarmonyTests").FullName;
+    }
+
+    private static string CreateTestFile(string directory, string fileName, int daysAgo = 0, DateTime? utcTime = null)
+    {
+        var path = Path.Combine(directory, fileName);
+        File.WriteAllText(path, "test");
+        File.SetLastWriteTimeUtc(path, utcTime ?? DateTime.UtcNow.AddDays(-daysAgo));
+        return path;
     }
 
     #endregion

@@ -1,11 +1,9 @@
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Harmony.Dto;
 using Spectre.Console;
 using File = System.IO.File;
-using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Harmony;
 
@@ -22,8 +20,9 @@ internal class AaxToM4BConvertor : AudiobookConverterBase
     private readonly string _activationBytes;
 
     public AaxToM4BConvertor(string activationBytes, int bitrate, bool quietMode, string inputFolder,
-        string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null, ProgressContextManager? progressManager = null)
-        : base(bitrate, quietMode, inputFolder, outputFolder, clobber, library, progressManager)
+        string outputFolder, bool clobber, List<AudibleLibraryDto>? library = null,
+        ProgressContextManager? progressManager = null, IReadOnlySet<string>? skipFiles = null)
+        : base(bitrate, quietMode, inputFolder, outputFolder, clobber, library, progressManager, skipFiles)
     {
         _activationBytes = activationBytes;
     }
@@ -53,7 +52,7 @@ internal class AaxToM4BConvertor : AudiobookConverterBase
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "ffprobe",
+                FileName = ResolveFFprobePath(),
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -75,9 +74,6 @@ internal class AaxToM4BConvertor : AudiobookConverterBase
 
         logger.WriteLine("Done");
 
-        return JsonSerializer.Deserialize<AaxInfoDto>(output, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        return ParseProbeOutput(output);
     }
 }

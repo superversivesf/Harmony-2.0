@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using Harmony.Dto;
@@ -30,7 +31,7 @@ public class AudiobookConverterBaseTests : IDisposable
     {
         // Arrange - Create a testable subclass
         var converter = new TestableAudiobookConverter();
-        
+
         // Act
         var result = converter.CleanAuthorPublic("Rob Reid");
 
@@ -74,7 +75,7 @@ public class AudiobookConverterBaseTests : IDisposable
         var result = converter.CleanAuthorPublic("Rob Reid, Jane Smith, John Doe, Alice Brown");
 
         // Assert
-        result.Should().Be("Rob Reid, Jane Smith, John Doe, Alice Brown", 
+        result.Should().Be("Rob Reid, Jane Smith, John Doe, Alice Brown",
             "Should preserve names when author count equals max");
     }
 
@@ -217,7 +218,7 @@ public class AudiobookConverterBaseTests : IDisposable
         var quotedPath = $"\"{pathWithSpaces}\"";
 
         // Assert
-        quotedPath.Should().Be("\"/output/Rob Reid/My Book/My Book.m4b\"", 
+        quotedPath.Should().Be("\"/output/Rob Reid/My Book/My Book.m4b\"",
             "Path with spaces should be wrapped in quotes for FFmpeg");
     }
 
@@ -234,11 +235,11 @@ public class AudiobookConverterBaseTests : IDisposable
         var commandPattern = $"-i \"{inputFile}\" -i \"{chapterFile}\" -map_metadata 1 -codec copy \"{outputFile}\"";
 
         // Assert
-        commandPattern.Should().Contain("\"/output/Rob Reid/Book/Book-nochapter.m4b\"", 
+        commandPattern.Should().Contain("\"/output/Rob Reid/Book/Book-nochapter.m4b\"",
             "Input file path should be quoted");
-        commandPattern.Should().Contain("\"/output/Rob Reid/Book/chapter.txt\"", 
+        commandPattern.Should().Contain("\"/output/Rob Reid/Book/chapter.txt\"",
             "Chapter file path should be quoted");
-        commandPattern.Should().Contain("\"/output/Rob Reid/Book/Book.m4b\"", 
+        commandPattern.Should().Contain("\"/output/Rob Reid/Book/Book.m4b\"",
             "Output file path should be quoted");
     }
 
@@ -258,7 +259,7 @@ public class AudiobookConverterBaseTests : IDisposable
         var result = converter.ProcessTitleForComparisonPublic(titleString);
 
         // Assert
-        result.Should().Be("yearzeroanovel", 
+        result.Should().Be("yearzeroanovel",
             "Should strip Unabridged suffix before comparison - 'Year Zero' + 'A Novel' matches library.tsv");
     }
 
@@ -273,7 +274,7 @@ public class AudiobookConverterBaseTests : IDisposable
         var result = converter.ProcessTitleForComparisonPublic(libraryTitle);
 
         // Assert
-        result.Should().Be("yearzeroanovel", 
+        result.Should().Be("yearzeroanovel",
             "Library title combined with subtitle should produce clean match key");
     }
 
@@ -293,7 +294,7 @@ public class AudiobookConverterBaseTests : IDisposable
         var libraryProcessed = converter.ProcessTitleForComparisonPublic(libraryTitle);
 
         // Assert - They should now match
-        aaxcProcessed.Should().Be(libraryProcessed, 
+        aaxcProcessed.Should().Be(libraryProcessed,
             "After stripping (Unabridged), AAXC title should match library.tsv entry");
     }
 
@@ -416,6 +417,111 @@ public class AudiobookConverterBaseTests : IDisposable
 
     #endregion
 
+    #region Parse Probe Output Tests
+
+    [Fact]
+    public void ParseProbeOutput_WithEmptyOutput_ShouldReturnNull()
+    {
+        AudiobookConverterBase.ParseProbeOutput(string.Empty).Should().BeNull(
+            "an empty ffprobe response means probing failed and the file should be skipped");
+    }
+
+    [Fact]
+    public void ParseProbeOutput_WithWhitespaceOutput_ShouldReturnNull()
+    {
+        AudiobookConverterBase.ParseProbeOutput("  \n ").Should().BeNull(
+            "whitespace-only ffprobe output must not be deserialized");
+    }
+
+    [Fact]
+    public void ParseProbeOutput_WithGarbageOutput_ShouldReturnNull()
+    {
+        AudiobookConverterBase.ParseProbeOutput("<this is not json!>").Should().BeNull(
+            "a malformed ffprobe response should keep the file being skipped, not crash the run");
+    }
+
+    [Fact]
+    public void ParseProbeOutput_WithValidJson_ShouldReturnParsedDto()
+    {
+        var dto = AudiobookConverterBase.ParseProbeOutput(
+            /*lang=json,strict*/ """{"format": {"format_name": "aac"}}""");
+
+        dto.Should().NotBeNull("valid ffprobe JSON should parse");
+        dto!.format.format_name.Should().Be("aac");
+    }
+
+    #endregion
+
+    #region ffprobe Path Resolution Tests
+
+    [Fact]
+    public void ResolveFFprobePath_WhenLocalBinaryExists_ShouldReturnFullPath()
+    {
+        // Arrange - the copy the app downloads via --fetch-ffmpeg
+        var localBinary = Path.Combine(_testDirectory, "ffprobe");
+        File.WriteAllText(localBinary, string.Empty);
+
+        // Act
+        var resolved = AudiobookConverterBase.ResolveFFprobePath(_testDirectory);
+
+        // Assert
+        resolved.Should().Be(localBinary, "the locally downloaded copy should be preferred over PATH");
+    }
+
+    [Fact]
+    public void ResolveFFprobePath_WhenNoLocalBinary_ShouldFallBackToPathLookup()
+    {
+        AudiobookConverterBase.ResolveFFprobePath(_testDirectory).Should().Be(
+            "ffprobe", "without a local copy the resolver should defer to PATH lookup");
+    }
+
+    #endregion
+
+    #region Per-File Error Resilience Tests
+
+    [Fact]
+    public async Task ExecuteAsync_WhenOneFileFailsToProbe_ShouldProcessRemainingFiles()
+    {
+        // Arrange - two probeable files, probing always fails
+        var inputFolder = Path.Combine(_testDirectory, "input");
+        var outputFolder = Path.Combine(_testDirectory, "output");
+        Directory.CreateDirectory(inputFolder);
+        Directory.CreateDirectory(outputFolder);
+        File.WriteAllText(Path.Combine(inputFolder, "bad.test"), "a");
+        File.WriteAllText(Path.Combine(inputFolder, "also-bad.test"), "a");
+        var converter = new ThrowingProbeConverter(
+            inputFolder, outputFolder, new JsonException("simulated probe failure"));
+
+        // Act
+        var act = async () => await converter.ExecuteAsync().ConfigureAwait(false);
+
+        // Act & Assert
+        await act.Should().NotThrowAsync("a corrupt file should not abort the whole run");
+        converter.CallCount.Should().Be(2, "the loop should continue to every remaining file");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCancelled_ShouldThrowOperationCanceledException()
+    {
+        // Arrange
+        var inputFolder = Path.Combine(_testDirectory, "input");
+        var outputFolder = Path.Combine(_testDirectory, "output");
+        Directory.CreateDirectory(inputFolder);
+        Directory.CreateDirectory(outputFolder);
+        File.WriteAllText(Path.Combine(inputFolder, "book.test"), "a");
+        var converter = new ThrowingProbeConverter(
+            inputFolder, outputFolder, new OperationCanceledException());
+
+        // Act
+        var act = async () => await converter.ExecuteAsync().ConfigureAwait(false);
+
+        // Act & Assert
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "cancellation must never be swallowed by per-file error handling");
+    }
+
+    #endregion
+
     #region Helper Test Class
 
     /// <summary>
@@ -423,13 +529,18 @@ public class AudiobookConverterBaseTests : IDisposable
     /// </summary>
     private class TestableAudiobookConverter : AudiobookConverterBase
     {
-        public TestableAudiobookConverter() 
+        public TestableAudiobookConverter()
             : base(bitrate: 64, quietMode: true, inputFolder: "/tmp", outputFolder: "/tmp", clobber: false)
         {
         }
 
-        public TestableAudiobookConverter(bool clobber) 
+        public TestableAudiobookConverter(bool clobber)
             : base(bitrate: 64, quietMode: true, inputFolder: "/tmp", outputFolder: "/tmp", clobber: clobber)
+        {
+        }
+
+        public TestableAudiobookConverter(string inputFolder, string outputFolder)
+            : base(bitrate: 64, quietMode: true, inputFolder: inputFolder, outputFolder: outputFolder, clobber: false)
         {
         }
 
@@ -443,8 +554,30 @@ public class AudiobookConverterBaseTests : IDisposable
         public string CleanAuthorPublic(string? name) => CleanAuthor(name);
         public string? CleanTitlePublic(string? title) => CleanTitle(title);
         public string ProcessTitleForComparisonPublic(string? input) => ProcessTitleForComparison(input);
-        public ExistingFileAction GetExistingFileActionPublic(string existingM4BPath, string sourceFilePath) 
+        public ExistingFileAction GetExistingFileActionPublic(string existingM4BPath, string sourceFilePath)
             => GetExistingFileAction(existingM4BPath, sourceFilePath);
+    }
+
+    /// <summary>
+    /// Testable subclass whose file probing fails, for error-path testing.
+    /// </summary>
+    private class ThrowingProbeConverter : TestableAudiobookConverter
+    {
+        private readonly Exception _exception;
+
+        public ThrowingProbeConverter(string inputFolder, string outputFolder, Exception exception)
+            : base(inputFolder, outputFolder)
+        {
+            _exception = exception;
+        }
+
+        public int CallCount { get; private set; }
+
+        protected override AaxInfoDto? GetFileInfo(string filePath)
+        {
+            CallCount++;
+            throw _exception;
+        }
     }
 
     #endregion
