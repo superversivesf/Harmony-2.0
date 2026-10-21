@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using Harmony.Dto;
+using File = System.IO.File;
+using TagLib;
 
 namespace Harmony.Tests;
 
@@ -447,7 +449,7 @@ public class AudiobookConverterBaseTests : IDisposable
             /*lang=json,strict*/ """{"format": {"format_name": "aac"}}""");
 
         dto.Should().NotBeNull("valid ffprobe JSON should parse");
-        dto!.format.format_name.Should().Be("aac");
+        dto!.format!.format_name.Should().Be("aac");
     }
 
     #endregion
@@ -522,6 +524,95 @@ public class AudiobookConverterBaseTests : IDisposable
 
     #endregion
 
+    #region Apple Series Atom Tests
+
+    private static string CopySilenceFixture(string directory, string fileName)
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "TestAssets", "silence.m4a");
+        var destination = Path.Combine(directory, fileName);
+        File.Copy(source, destination, overwrite: true);
+        return destination;
+    }
+
+    private static AaxInfoDto BuildAaxInfo(string title)
+    {
+        return new AaxInfoDto
+        {
+            format = new AaxFormat
+            {
+                tags = new AaxTags { title = title, artist = "J S Morin" }
+            }
+        };
+    }
+
+    [Fact]
+    public void AddMetadataToM4A_WithLibrarySeriesMatch_ShouldWriteSeriesAtoms()
+    {
+        // Arrange
+        var entry = new AudibleLibraryDto
+        {
+            title = "Galaxy Outlaws",
+            series_title = "Galaxy Outlaws",
+            series_sequence = "3",
+            authors = "J S Morin",
+            narrators = "Judy Romelos",
+            genres = "Science Fiction & Fantasy",
+            release_date = new DateTime(2021, 6, 1, 0, 0, 0, DateTimeKind.Utc)
+        };
+        var inputFolder = Path.Combine(_testDirectory, "input");
+        var outputFolder = Path.Combine(_testDirectory, "output");
+        Directory.CreateDirectory(inputFolder);
+        Directory.CreateDirectory(outputFolder);
+        var converter = new TestableAudiobookConverter(
+            inputFolder, outputFolder, new List<AudibleLibraryDto> { entry });
+        var testFile = CopySilenceFixture(outputFolder, "book.m4a");
+
+        // Act
+        converter.AddMetadataToM4APublic(testFile, BuildAaxInfo("Galaxy Outlaws"), "missing-cover.jpg");
+
+        // Assert - reopen the real file and read the atoms back
+        using (var file = TagLib.File.Create(testFile))
+        {
+            var apple = file.GetTag(TagTypes.Apple) as TagLib.Mpeg4.AppleTag;
+            apple.Should().NotBeNull("M4B files should carry the Apple tag");
+            apple!.GetText("mvnm").Should().ContainSingle(
+                    because: "Audiobookshelf reads series from the mvnm atom")
+                .Which.Should().Be("Galaxy Outlaws");
+            apple.GetText("mvin").Should().ContainSingle(
+                    because: "Audiobookshelf reads the series sequence from the mvin atom")
+                .Which.Should().Be("3");
+        }
+    }
+
+    [Fact]
+    public void AddMetadataToM4A_WithLibraryMatchWithoutSeries_ShouldWriteBookTitleButNoAtoms()
+    {
+        // Arrange
+        var entry = new AudibleLibraryDto { title = "Standalone Book", authors = "Solo Author" };
+        var inputFolder = Path.Combine(_testDirectory, "input");
+        var outputFolder = Path.Combine(_testDirectory, "output");
+        Directory.CreateDirectory(inputFolder);
+        Directory.CreateDirectory(outputFolder);
+        var converter = new TestableAudiobookConverter(
+            inputFolder, outputFolder, new List<AudibleLibraryDto> { entry });
+        var testFile = CopySilenceFixture(outputFolder, "book.m4a");
+
+        // Act
+        converter.AddMetadataToM4APublic(testFile, BuildAaxInfo("Standalone Book"), "missing-cover.jpg");
+
+        // Assert
+        using (var file = TagLib.File.Create(testFile))
+        {
+            var apple = file.GetTag(TagTypes.Apple) as TagLib.Mpeg4.AppleTag;
+            apple.Should().NotBeNull();
+            apple!.Title.Should().Be("Standalone Book");
+            apple.GetText("mvnm").Should().BeEmpty("absent series data must not emit an mvnm atom");
+            apple.GetText("mvin").Should().BeEmpty("absent series data must not emit an mvin atom");
+        }
+    }
+
+    #endregion
+
     #region Helper Test Class
 
     /// <summary>
@@ -544,6 +635,13 @@ public class AudiobookConverterBaseTests : IDisposable
         {
         }
 
+        public TestableAudiobookConverter(
+            string inputFolder, string outputFolder, List<AudibleLibraryDto>? library)
+            : base(bitrate: 64, quietMode: true, inputFolder: inputFolder, outputFolder: outputFolder,
+                clobber: false, library: library)
+        {
+        }
+
         protected override string FileExtensionPattern => "*.test";
 
         protected override IEnumerable<string> GetAuthenticationParameters() => Array.Empty<string>();
@@ -556,6 +654,8 @@ public class AudiobookConverterBaseTests : IDisposable
         public string ProcessTitleForComparisonPublic(string? input) => ProcessTitleForComparison(input);
         public ExistingFileAction GetExistingFileActionPublic(string existingM4BPath, string sourceFilePath)
             => GetExistingFileAction(existingM4BPath, sourceFilePath);
+        public void AddMetadataToM4APublic(string filePath, AaxInfoDto? aaxInfo, string coverPath)
+            => AddMetadataToM4A(filePath, aaxInfo, coverPath);
     }
 
     /// <summary>

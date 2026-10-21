@@ -1,3 +1,6 @@
+using CsvHelper;
+using CsvHelper.Configuration;
+using System.Globalization;
 using FluentAssertions;
 using Harmony.Dto;
 using Newtonsoft.Json;
@@ -304,8 +307,8 @@ public class DtoTests
         // Assert
         dto.asin.Should().BeNull();
         dto.title.Should().BeNull();
-        dto.runtime_length_min.Should().Be(0);
-        dto.is_finished.Should().BeFalse();
+        dto.runtime_length_min.Should().BeNull("missing values in the TSV must not abort parsing");
+        dto.is_finished.Should().BeNull("missing values in the TSV must not abort parsing");
         dto.percent_complete.Should().BeNull();
     }
 
@@ -778,6 +781,128 @@ public class DtoTests
         // Assert
         deserialized.Should().NotBeNull();
         deserialized!.content_metadata!.chapter_info!.chapters.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region AudibleLibraryDto Trimmed List Getter Tests
+
+    [Fact]
+    public void AudibleLibraryDto_GetAuthorsList_ShouldTrimAndDropEmptyEntries()
+    {
+        // audible-cli joins names with ", "
+        var dto = new AudibleLibraryDto { authors = "Arthur Dent,  Ford Prefect , " };
+
+        dto.GetAuthorsList().Should().BeEquivalentTo("Arthur Dent", "Ford Prefect");
+    }
+
+    [Fact]
+    public void AudibleLibraryDto_GetNarratorsList_ShouldTrimAndDropEmptyEntries()
+    {
+        var dto = new AudibleLibraryDto { narrators = "Bob Voice," };
+
+        dto.GetNarratorsList().Should().BeEquivalentTo("Bob Voice");
+    }
+
+    [Fact]
+    public void AudibleLibraryDto_GetGenresList_ShouldTrimAndDropEmptyEntries()
+    {
+        var dto = new AudibleLibraryDto { genres = " Science Fiction & Fantasy, Fiction " };
+
+        dto.GetGenresList().Should().BeEquivalentTo("Science Fiction & Fantasy", "Fiction");
+    }
+
+    [Fact]
+    public void AudibleLibraryDto_GetAuthorsList_WithMissingAuthors_ShouldReturnEmpty()
+    {
+        var dto = new AudibleLibraryDto();
+
+        dto.GetAuthorsList().Should().BeEmpty("a blank lookup must not throw");
+    }
+
+    #endregion
+
+    #region AudibleLibraryDto TSV Tests (CsvHelper)
+    // Header row and value quirks mirror audible-cli's `library export` TSV exactly:
+    // "-" placeholders for missing ratings, empty cells for omitted optional fields.
+    private const string AudibleCliHeaders =
+        "asin\ttitle\tsubtitle\textended_product_description\tauthors\tnarrators\tseries_title\tseries_sequence\tgenres\truntime_length_min\tis_finished\tpercent_complete\trating\tnum_ratings\tdate_added\trelease_date\tcover_url\tpurchase_date\n";
+
+    private List<AudibleLibraryDto> ReadTsv(string tsv)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"DtoTest_{Guid.NewGuid():N}.tsv");
+        File.WriteAllText(path, tsv);
+        try
+        {
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = "\t" };
+            using var reader = new StreamReader(path);
+            using var csv = new CsvReader(reader, config);
+            return csv.GetRecords<AudibleLibraryDto>().ToList();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ParseTsv_WithDashPlaceholders_ShouldMapNulls()
+    {
+        // Arrange - audible-cli writes "-" for an unrated book
+        var tsv = AudibleCliHeaders +
+            "B012345678\tSome Title\t\tA description\tArthur Dent, Ford Prefect\tMarvin,\t\t\tSci Fi, Fiction\t360\tFalse\t0.25\t-\t-\t2024-01-02T03:04:05+00:00\t2023-05-01T00:00:00+00:00\thttp://x\t2023-04-01T00:00:00+00:00\n";
+
+        // Act
+        var rows = ReadTsv(tsv);
+
+        // Assert
+        rows.Should().HaveCount(1);
+        rows[0].title.Should().Be("Some Title");
+        rows[0].rating.Should().BeNull("an unrated book must not abort parsing");
+        rows[0].num_ratings.Should().BeNull();
+        rows[0].authors.Should().Be("Arthur Dent, Ford Prefect");
+    }
+
+    [Fact]
+    public void ParseTsv_WithEmptyOptionalCells_ShouldMapNulls()
+    {
+        // Arrange - omitted optional values produce empty cells; runtime and dates blank
+        var tsv = AudibleCliHeaders +
+            "B012345679\tOther Title\t\t\tZaphod B\t\t\t\t\t\tTrue\t1.0\t4.5\t42\t\t2023-05-01T00:00:00+00:00\t-\t\n";
+
+        // Act
+        var rows = ReadTsv(tsv);
+
+        // Assert
+        rows.Should().HaveCount(1);
+        rows[0].runtime_length_min.Should().BeNull();
+        rows[0].date_added.Should().BeNull();
+        rows[0].purchase_date.Should().BeNull();
+        rows[0].release_date.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ParseTsv_WithFullyPopulatedRow_ShouldMapAllFields()
+    {
+        // Arrange
+        var tsv = AudibleCliHeaders +
+            "B098765432\tFull Book\tThe Sequel\tDesc here\tJane Doe, John Doe\tBob Voice\tSeries Name\t2\tFantasy\t300\tTrue\t1.0\t4.6\t100\t2024-02-03T10:11:12+00:00\t2023-06-01T00:00:00+00:00\turl\t2023-04-01\n";
+
+        // Act
+        var rows = ReadTsv(tsv);
+
+        // Assert
+        rows.Should().HaveCount(1);
+        rows[0].asin.Should().Be("B098765432");
+        rows[0].series_title.Should().Be("Series Name");
+        rows[0].series_sequence.Should().Be("2");
+        rows[0].runtime_length_min.Should().Be(300);
+        rows[0].is_finished.Should().BeTrue();
+        rows[0].percent_complete.Should().Be(1.0);
+        rows[0].rating.Should().Be(4.6);
+        rows[0].release_date.Should().NotBeNull();
+        rows[0]!.release_date!.Value.Year.Should().Be(2023);
+        rows[0].purchase_date.Should().NotBeNull();
     }
 
     #endregion

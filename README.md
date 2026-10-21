@@ -49,7 +49,7 @@ dotnet publish -c Release
 
 ```bash
 # Using audible-cli to download your library
-audible library export -t library.tsv
+audible library export -o library.tsv -f tsv
 
 # Download your audiobooks (produces .aaxc and .voucher files)
 audible download --all

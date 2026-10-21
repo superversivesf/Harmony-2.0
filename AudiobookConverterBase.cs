@@ -428,7 +428,7 @@ internal abstract class AudiobookConverterBase
         return coverFile;
     }
 
-    private void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
+    protected void AddMetadataToM4A(string filePath, AaxInfoDto? aaxInfo, string coverPath)
     {
         if (_progressManager?.IsCancelled == true)
             throw new OperationCanceledException();
@@ -438,7 +438,12 @@ internal abstract class AudiobookConverterBase
 
         using (var file = TagLib.File.Create(filePath))
         {
-            var tag = file.GetTag(TagTypes.Apple);
+            var tag = file.GetTag(TagTypes.Apple) as TagLib.Mpeg4.AppleTag;
+            if (tag is null)
+            {
+                logger.WriteLine("Skipped: file has no Apple tag.");
+                return;
+            }
 
             var found = false;
             if (_library is not null)
@@ -471,28 +476,36 @@ internal abstract class AudiobookConverterBase
                     {
                         found = true;
                         tag.Copyright = aaxInfo?.format?.tags?.copyright;
-                        tag.AlbumArtists = data.authors?.Split(",") ?? Array.Empty<string>();
+                        tag.AlbumArtists = data.GetAuthorsList();
+                        tag.Performers = data.GetAuthorsList();
                         tag.Title = data.title;
                         tag.Album = data.title;
                         tag.Subtitle = data.subtitle;
-                        tag.Year = (uint)data.release_date.Year;
-                        tag.Composers = data.narrators?.Split(",") ?? Array.Empty<string>();
+                        if (data.release_date is not null)
+                            tag.Year = (uint)data.release_date.Value.Year;
+                        tag.Composers = data.GetNarratorsList();
                         tag.Description = data.extended_product_description;
-                        tag.Genres = data.genres?.Split(",") ?? Array.Empty<string>();
+                        tag.Genres = data.GetGenresList();
                         tag.AmazonId = data.asin;
+
+                        if (!string.IsNullOrWhiteSpace(data.series_title))
+                            tag.SetText("mvnm", data.series_title);
+
+                        if (!string.IsNullOrWhiteSpace(data.series_sequence))
+                            tag.SetText("mvin", data.series_sequence);
 
                         var metadata = new AbsMetadata
                         {
                             title = data.title,
                             subtitle = data.subtitle,
-                            authors = data.authors?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
-                            narrators = data.narrators?.Split(",").Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
+                            authors = data.GetAuthorsList().ToList(),
+                            narrators = data.GetNarratorsList().ToList(),
                             series = !string.IsNullOrWhiteSpace(data.series_title)
                                 ? new List<string> { $"{data.series_title} #{data.series_sequence}".Trim() }
                                 : new List<string>(),
-                            genres = data.genres?.Split(',').Select(g => g.Trim()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList(),
-                            publishedYear = data.release_date.Year.ToString(),
-                            publishedDate = data.release_date.Date.ToString("yyyy-MM-dd"),
+                            genres = data.GetGenresList().ToList(),
+                            publishedYear = data.release_date?.Year.ToString() ?? string.Empty,
+                            publishedDate = data.release_date?.Date.ToString("yyyy-MM-dd") ?? string.Empty,
                             description = data.extended_product_description,
                             asin = data.asin
                         };
@@ -581,6 +594,7 @@ internal abstract class AudiobookConverterBase
         return name.Replace("Jr.", "Jr").Trim();
     }
 
+    /// <summary>
     /// Locates ffprobe: prefers the copy downloaded into the working directory (via
     /// --fetch-ffmpeg or the first run) and falls back to PATH lookup.
     /// </summary>
