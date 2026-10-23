@@ -91,9 +91,33 @@ internal abstract class AudiobookConverterBase
         CheckFolders();
         logger.WriteLine("Done");
         var filePaths = Directory.GetFiles(_inputFolder, FileExtensionPattern, SearchOption.AllDirectories);
-        logger.WriteLine($"Found {filePaths.Length} files to process\n");
+        var (mergeGroups, singleFiles) = PartMerging.GroupParts(filePaths);
+        logger.WriteLine($"Found {filePaths.Length} files to process: {mergeGroups.Length} multipart books, {singleFiles.Count} single-file books\n");
 
-        foreach (var filePath in filePaths)
+        foreach (var group in mergeGroups)
+        {
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+            if (_skipFiles?.Contains(group.Parts[0].Item2) == true)
+                continue;
+            _progressManager?.StartNewFile(group.Base);
+            try
+            {
+                await ProcessMergedBookAsync(group, logger).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[merge-error] {group.Base}: {ex}");
+                logger.WriteLine($"Error merging {group.Base}: {ex.Message}. Moving to next book.");
+            }
+            _progressManager?.CompleteFile();
+        }
+
+        foreach (var filePath in singleFiles)
         {
             if (_progressManager?.IsCancelled == true)
                 throw new OperationCanceledException();
@@ -117,6 +141,129 @@ internal abstract class AudiobookConverterBase
 
             _progressManager?.CompleteFile();
         }
+    }
+
+    /// <summary>
+    /// Converts each part of a multipart book, concatenates them stream-copy, and
+    /// applies one combined chapter timeline plus full metadata to the final M4B.
+    /// </summary>
+    protected async Task ProcessMergedBookAsync((string Base, List<(int, string)> Parts) group, Logger logger)
+    {
+        if (_progressManager?.IsCancelled == true)
+            throw new OperationCanceledException();
+
+        logger.WriteLine($"Merging multipart book: {group.Base} ({group.Parts.Count} parts)");
+        var firstPart = group.Parts[0].Item2;
+        var firstInfo = GetFileInfo(firstPart);
+        if (firstInfo is null)
+        {
+            logger.WriteLine("  Failed to probe part 1 - skipping merged book.");
+            return;
+        }
+
+        var boxset = new Regex("Part_[0-9]-LC").Match(firstPart).Success;
+        var outputDirectory = PrepareOutputDirectory(firstInfo, boxset);
+        var workDir = Path.Combine(outputDirectory, "merged-work");
+        Directory.CreateDirectory(workDir);
+
+        var intermediates = new List<string>();
+        var chapterLists = new List<List<(int, int, string)>>();
+        var partDurations = new List<double>();
+
+        foreach (var (partNumber, partPath) in group.Parts)
+        {
+            if (_progressManager?.IsCancelled == true)
+                throw new OperationCanceledException();
+
+            var partInfo = GetFileInfo(partPath) ?? firstInfo;   // same book: part-1 metadata is the fallback
+            var partDir = Path.Combine(workDir, "part" + partNumber);
+            Directory.CreateDirectory(partDir);
+
+            var partChapterFile = Path.Combine(partDir, "chapters.txt");
+            ChapterConverter.CreateChapterFile(partPath, partInfo, partChapterFile);
+            chapterLists.Add(PartMerging.ParseFfmetadata(File.ReadAllText(partChapterFile)));
+
+            var intermediate = await ProcessToM4AAsync(partInfo, partPath, partDir).ConfigureAwait(false);
+            if (intermediate is null)
+            {
+                logger.WriteLine("  Part conversion failed - skipping merged book.");
+                Directory.Delete(workDir, recursive: true);
+                return;
+            }
+            intermediates.Add(intermediate);
+            partDurations.Add(GetMediaDurationSeconds(intermediate));
+        }
+
+        if (_progressManager?.IsCancelled == true)
+            throw new OperationCanceledException();
+
+        var mergedChapters = PartMerging.MergeChapters(
+            chapterLists.Zip(partDurations, (c, d) => (c, d)).ToArray());
+        var combinedChapterFile = Path.Combine(workDir, "combined-chapters.txt");
+        File.WriteAllText(combinedChapterFile, PartMerging.BuildFfmetadataText(mergedChapters));
+        var concatListFile = Path.Combine(workDir, "parts.txt");
+        File.WriteAllText(concatListFile, PartMerging.BuildConcatList(intermediates));
+
+        var title = CleanTitle(firstInfo.format?.tags?.title) ?? group.Base;
+        var finalM4b = Path.Combine(outputDirectory, title + ".m4b");
+        if (File.Exists(finalM4b))
+            File.Delete(finalM4b);
+
+        var conversion = FFmpeg.Conversions.New()
+            .AddParameter("-f")
+            .AddParameter("concat")
+            .AddParameter("-safe")
+            .AddParameter("0")
+            .AddParameter("-i")
+            .AddParameter($"\"{concatListFile}\"")
+            .AddParameter("-i")
+            .AddParameter($"\"{combinedChapterFile}\"")
+            .AddParameter("-map_metadata")
+            .AddParameter("0")
+            .AddParameter("-map_chapters")
+            .AddParameter("1")
+            .AddParameter("-codec")
+            .AddParameter("copy")
+            .SetOutput($"\"{finalM4b}\"");
+        await conversion.Start().ConfigureAwait(false);
+
+        var analyser = new FFProbeAnalyzer(logger);
+        if (!await analyser.AnalyzeFile(finalM4b).ConfigureAwait(false))
+            logger.WriteLine($"Warning: merged file failed the good-file check: {finalM4b}");
+
+        var coverFile = await GenerateCoverAsync(firstPart, outputDirectory).ConfigureAwait(false);
+        AddMetadataToM4A(finalM4b, firstInfo, coverFile);
+
+        Directory.Delete(workDir, recursive: true);
+        logger.WriteLine($"Merged book complete: {finalM4b}");
+    }
+
+    private double GetMediaDurationSeconds(string mediaPath)
+    {
+        var probe = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = ResolveFFprobePath(),
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            }
+        };
+        probe.StartInfo.ArgumentList.Add("-v");
+        probe.StartInfo.ArgumentList.Add("quiet");
+        probe.StartInfo.ArgumentList.Add("-show_entries");
+        probe.StartInfo.ArgumentList.Add("format=duration");
+        probe.StartInfo.ArgumentList.Add("-print_format");
+        probe.StartInfo.ArgumentList.Add("json");
+        probe.StartInfo.ArgumentList.Add(mediaPath);
+        probe.Start();
+        var output = probe.StandardOutput.ReadToEnd();
+        probe.WaitForExit();
+        var json = JsonSerializer.Deserialize<JsonElement>(output);
+        var durationText = json.GetProperty("format").GetProperty("duration").GetString();
+        return double.TryParse(durationText, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var seconds) ? seconds : 0.0;
     }
 
     private async Task ProcessFileAsync(string filePath)
@@ -196,6 +343,8 @@ internal abstract class AudiobookConverterBase
             .AddParameter("-i")
             .AddParameter($"\"{chapterFile}\"")
             .AddParameter("-map_metadata")
+            .AddParameter("0")
+            .AddParameter("-map_chapters")
             .AddParameter("1")
             .AddParameter("-codec")
             .AddParameter("copy")
@@ -225,7 +374,7 @@ internal abstract class AudiobookConverterBase
         if (aaxInfo?.chapters is not null) logger.WriteLine($"Chapters: {aaxInfo.chapters.Count}");
     }
 
-    private string PrepareOutputDirectory(AaxInfoDto? aaxInfo, bool boxset)
+    protected string PrepareOutputDirectory(AaxInfoDto? aaxInfo, bool boxset)
     {
         var title = CleanTitle(aaxInfo?.format?.tags?.title) ?? "Unknown";
         if (boxset)
@@ -293,7 +442,7 @@ internal abstract class AudiobookConverterBase
         return outputFile;
     }
 
-    private async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
+    protected async Task<string?> ProcessToM4AAsync(AaxInfoDto aaxInfo, string filePath, string outputDirectory)
     {
         var logger = new Logger(_quietMode, _progressManager is not null);
         logger.Write("Converting to M4A...      ");
@@ -378,7 +527,7 @@ internal abstract class AudiobookConverterBase
         return outputFile;
     }
 
-    private async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
+    protected async Task<string> GenerateCoverAsync(string filePath, string outputDirectory)
     {
         var logger = new Logger(_quietMode, _progressManager is not null);
         logger.Write("Extracting cover art... ");

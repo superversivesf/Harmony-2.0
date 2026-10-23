@@ -6,7 +6,7 @@ namespace Harmony;
 
 internal class ChapterConverter
 {
-    public static void CreateChapterFile(string filePath, AaxInfoDto aaxinfo, string outputPath)
+    public static void CreateChapterFile(string filePath, AaxInfoDto? aaxinfo, string outputPath)
     {
         var sb = new StringBuilder();
         sb.AppendLine(";FFMETADATA1");
@@ -38,7 +38,7 @@ internal class ChapterConverter
                 sb.AppendLine($"title={c.title}");
             }
         }
-        else if (aaxinfo.chapters?.Count > 0)
+        else if (aaxinfo?.chapters?.Count > 0)
         {
             for (int i = 0; i < aaxinfo.chapters.Count; i++)
             {
