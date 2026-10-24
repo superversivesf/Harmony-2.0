@@ -203,3 +203,62 @@ public class PartMergingFfmetadataWriterTests
             .Should().BeEquivalentTo(chapters, "writer output must parse back to identical chapters");
     }
 }
+
+public class PartMergingSkipTests
+{
+    private string MakeFile(string dir, string name, DateTime utc)
+    {
+        Directory.CreateDirectory(dir);
+        var p = Path.Combine(dir, name);
+        File.WriteAllText(p, "x");
+        File.SetLastWriteTimeUtc(p, utc);
+        return p;
+    }
+
+    [Fact]
+    public void ShouldSkipMerge_WhenFinalMissing_ReturnsFalse()
+    {
+        var final = "/tmp/does/not/exist.m4b";
+        PartMerging.ShouldSkipMerge(final, new[] { MakeFile("/tmp/pm1a", "p1.aax", DateTime.UtcNow) }).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldSkipMerge_WhenFinalNewerThanAllParts_ReturnsTrue()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "SkipT_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var parts = new[] { "a.aax", "b.aax", "c.aax" }.Select((f, i) =>
+                MakeFile(dir, f, DateTime.UtcNow.AddHours(-2).AddMinutes(i))).ToArray();
+            var final = MakeFile(dir, "final.m4b", DateTime.UtcNow.AddMinutes(-30));
+            PartMerging.ShouldSkipMerge(final, parts).Should().BeTrue("the final is newer than every part source");
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ShouldSkipMerge_WhenAnyPartNewerThanFinal_ReturnsFalse()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "SkipU_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var parts = new[] {
+                MakeFile(dir, "a.aax", DateTime.UtcNow.AddHours(-3)),
+                MakeFile(dir, "b.aax", DateTime.UtcNow),          // re-downloaded part: newer!
+                MakeFile(dir, "c.aax", DateTime.UtcNow.AddHours(-3)),
+            };
+            var final = MakeFile(dir, "final.m4b", DateTime.UtcNow.AddHours(-1));
+            PartMerging.ShouldSkipMerge(final, parts).Should().BeFalse("a re-downloaded part must trigger a re-merge");
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ShouldSkipMerge_WithVanishedPartSource_IgnoresItWithoutThrowing()
+    {
+        var final = "/tmp/does/not/exist2.m4b";
+        PartMerging.ShouldSkipMerge(final, new[] { "/tmp/nope/ghost.aax" }).Should().BeFalse();
+    }
+}

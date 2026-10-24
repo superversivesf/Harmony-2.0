@@ -144,6 +144,26 @@ internal static class PartMerging
     }
 
     /// <summary>
+    /// Decides whether an already-merged final M4B can be skipped: it must exist and
+    /// be newer than every part's source file. A missing source is ignored (vanished
+    /// files cannot be newer), and a missing or stale final always forces a rebuild.
+    /// </summary>
+    public static bool ShouldSkipMerge(string finalM4bPath, IEnumerable<string> partSourcePaths)
+    {
+        if (!File.Exists(finalM4bPath))
+            return false;
+        var final = File.GetLastWriteTimeUtc(finalM4bPath);
+        foreach (var src in partSourcePaths)
+        {
+            if (!File.Exists(src))
+                continue;
+            if (File.GetLastWriteTimeUtc(src) > final)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Builds the concat-demuxer file list, escaping single quotes in paths.
     /// </summary>
     public static string BuildConcatList(IEnumerable<string> files)

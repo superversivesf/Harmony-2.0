@@ -153,6 +153,7 @@ internal abstract class AudiobookConverterBase
             throw new OperationCanceledException();
 
         logger.WriteLine($"Merging multipart book: {group.Base} ({group.Parts.Count} parts)");
+        Console.Error.WriteLine($"[merge] {group.Base}: {group.Parts.Count} parts - converting and concatenating");
         var firstPart = group.Parts[0].Item2;
         var firstInfo = GetFileInfo(firstPart);
         if (firstInfo is null)
@@ -163,6 +164,15 @@ internal abstract class AudiobookConverterBase
 
         var boxset = new Regex("Part_[0-9]-LC").Match(firstPart).Success;
         var outputDirectory = PrepareOutputDirectory(firstInfo, boxset);
+
+        var title = CleanTitle(firstInfo.format?.tags?.title) ?? group.Base;
+        var finalM4b = Path.Combine(outputDirectory, title + ".m4b");
+        if (PartMerging.ShouldSkipMerge(finalM4b, group.Parts.Select(p => p.Item2)))
+        {
+            logger.WriteLine("  Already merged and part sources unchanged - skipping multipart book.");
+            return;
+        }
+
         var workDir = Path.Combine(outputDirectory, "merged-work");
         Directory.CreateDirectory(workDir);
 
@@ -183,15 +193,20 @@ internal abstract class AudiobookConverterBase
             ChapterConverter.CreateChapterFile(partPath, partInfo, partChapterFile);
             chapterLists.Add(PartMerging.ParseFfmetadata(File.ReadAllText(partChapterFile)));
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var intermediate = await ProcessToM4AAsync(partInfo, partPath, partDir).ConfigureAwait(false);
             if (intermediate is null)
             {
                 logger.WriteLine("  Part conversion failed - skipping merged book.");
+                Console.Error.WriteLine($"[merge] {group.Base}: part {partNumber} conversion failed - aborting this book");
                 Directory.Delete(workDir, recursive: true);
                 return;
             }
+            sw.Stop();
             intermediates.Add(intermediate);
-            partDurations.Add(GetMediaDurationSeconds(intermediate));
+            var dsec = GetMediaDurationSeconds(intermediate);
+            partDurations.Add(dsec);
+            Console.Error.WriteLine($"[merge] {group.Base}: part {partNumber}/{group.Parts.Count} converted in {sw.Elapsed.TotalMinutes:F1} min (audio duration {TimeSpan.FromSeconds(dsec)}), total so far {partDurations.Sum():F0} s");
         }
 
         if (_progressManager?.IsCancelled == true)
@@ -204,8 +219,6 @@ internal abstract class AudiobookConverterBase
         var concatListFile = Path.Combine(workDir, "parts.txt");
         File.WriteAllText(concatListFile, PartMerging.BuildConcatList(intermediates));
 
-        var title = CleanTitle(firstInfo.format?.tags?.title) ?? group.Base;
-        var finalM4b = Path.Combine(outputDirectory, title + ".m4b");
         if (File.Exists(finalM4b))
             File.Delete(finalM4b);
 
@@ -227,6 +240,7 @@ internal abstract class AudiobookConverterBase
             .SetOutput($"\"{finalM4b}\"");
         await conversion.Start().ConfigureAwait(false);
 
+        Console.Error.WriteLine($"[merge] {group.Base}: final file {new FileInfo(finalM4b).Length / 1048576.0:F0} MB, {mergedChapters.Count} chapters, {partDurations.Sum():F0} s audio");
         var analyser = new FFProbeAnalyzer(logger);
         if (!await analyser.AnalyzeFile(finalM4b).ConfigureAwait(false))
             logger.WriteLine($"Warning: merged file failed the good-file check: {finalM4b}");
